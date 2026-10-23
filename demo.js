@@ -80,8 +80,8 @@ const CHARGE_DEMO = (function () {
         { ref: "bloc-4-2-12", titre: "Course Séance 2", type: "Course (programme)", date: iso(lundi), duree: 60, rpe: "" }
       ],
       dernieres: [
-        { date: "22/10", type: "Match", duree: 70, rpe: 8, charge: 560, commentaire: "Victoire 31-27" },
-        { date: "20/10", type: "Entraînement", duree: 90, rpe: 6, charge: 540, commentaire: "" }
+        { date: "22/10", jour: "2026-10-22", type: "Match", duree: 70, rpe: 8, charge: 560, commentaire: "Victoire 31-27" },
+        { date: "20/10", jour: "2026-10-20", type: "Entraînement", duree: 90, rpe: 6, charge: 540, commentaire: "" }
       ]
     }
   };

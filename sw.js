@@ -5,7 +5,7 @@
  * ⚠ Changer VERSION à chaque modification d'un fichier de l'app, sinon le
  *   téléphone garde l'ancienne version en cache.
  */
-const VERSION = "ma-seance-v14";
+const VERSION = "ma-seance-v15";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "db.js", "sync.js", "demo.js",
   "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon.svg", "favicon-32.png",

@@ -1287,17 +1287,24 @@ function vueCharge() {
     }).join("") + `</div>`;
   }
 
-  // Séances déclarées : celles en attente d'envoi d'abord
-  const attente = envoisCharge("declarer").map((e) => Object.assign({ attente: true }, e.donnees.seance));
-  const dernieres = attente.map((x) => ({ date: jourCourt(x.date), type: x.type, duree: x.duree, rpe: x.rpe,
-                                          charge: x.duree * x.rpe, commentaire: x.commentaire, attente: true }))
-    .concat(C.page.dernieres || []);
+  // Séances déclarées : celles en attente d'envoi d'abord. Chacune garde une
+  // clé pour être modifiée : l'id de l'envoi en attente, ou sa place dans la liste du serveur.
+  const modifs = envoisCharge("declaree").map((e) => JSON.stringify(e.donnees.origine));
+  const dernieres = envoisCharge("declarer").map((e) => {
+    const x = e.donnees.seance;
+    return { cle: e.id, jour: x.date, date: jourCourt(x.date), type: x.type, duree: x.duree, rpe: x.rpe,
+             charge: x.duree * x.rpe, commentaire: x.commentaire, attente: true };
+  }).concat((C.page.dernieres || []).map((x, i) => Object.assign({}, x, {
+    cle: "srv-" + i, attente: modifs.includes(JSON.stringify(origineDe(x)))
+  })));
+  etat.declarees = dernieres;
   if (dernieres.length) {
     h += `<h2>Déclarées récemment</h2><div class="liste">` + dernieres.map((d) => `
       <div class="item"><div class="grow"><p style="font-weight:500">${esc(d.type)} <span class="muted xs">· ${esc(d.date)}</span></p>
         <p class="xs muted">${esc(d.duree)} min · charge ${esc(d.charge)}${d.commentaire ? " · " + esc(d.commentaire) : ""}</p></div>
         ${d.attente ? '<span class="badge accent">À envoyer</span>' : ""}
-        <span class="badge ${classeRPE(Number(d.rpe))}">RPE ${esc(d.rpe)}</span></div>`).join("") + `</div>`;
+        <span class="badge ${classeRPE(Number(d.rpe))}">RPE ${esc(d.rpe)}</span>
+        ${d.jour ? `<button class="btn icon plain" data-a="decl-editer" data-k="${esc(d.cle)}" aria-label="Modifier">${ic("crayon", "sm")}</button>` : ""}</div>`).join("") + `</div>`;
   }
 
   const d = new Date(C.maj);
@@ -1340,8 +1347,10 @@ function vueDeclarer() {
   if (!C || !f) return vueCharge();
   const types = (C.page && C.page.types) || ["Entraînement", "Match", "Course", "Mobilité / renfo", "Autre"];
   const min = new Date(); min.setDate(min.getDate() - 60);
+  const edition = !!f.cle;
   return `<button class="back" data-a="retour">${ic("gauche", "sm")}Charge</button>
-    <div class="top"><div><h1>Déclarer une séance</h1><p class="muted">Hand, match, course… tout ce qui n'est pas dans l'app.</p></div></div>
+    <div class="top"><div><h1>${edition ? "Modifier la séance" : "Déclarer une séance"}</h1>
+      <p class="muted">${edition ? "Corrige ce qui ne va pas, ou supprime-la." : "Hand, match, course… tout ce qui n'est pas dans l'app."}</p></div></div>
     <div class="card stack">
       <div><p class="sm" style="font-weight:600;margin-bottom:8px">Type</p>
         <div class="row wrap">${types.map((t) => `<button class="chip ${f.type === t ? "on" : ""}" data-a="form-type" data-t="${esc(t)}">${esc(t)}</button>`).join("")}</div></div>
@@ -1357,6 +1366,7 @@ function vueDeclarer() {
         <textarea data-in="form-comm" placeholder="Match amical, terrain gras…">${esc(f.commentaire)}</textarea></div>
       ${f.rpe ? `<p class="sm muted">Charge : ${f.duree} min × ${f.rpe} = <b>${f.duree * f.rpe}</b></p>` : ""}
     </div>
+    ${edition ? `<button class="btn danger block mt" data-a="decl-supprimer">${ic("x")}Supprimer cette séance</button>` : ""}
     <div class="pied"><button class="btn lg" data-a="declarer-ok">${ic("check")}Enregistrer</button></div>`;
 }
 
@@ -1375,6 +1385,53 @@ function vueProgrammee() {
           <button data-a="prog-duree" data-v="5" aria-label="Plus">${ic("plus", "sm")}</button></div></div>
     </div>
     <div class="pied"><button class="btn lg" data-a="prog-ok">${ic("check")}Enregistrer</button></div>`;
+}
+
+/** Ce que le serveur doit retrouver dans « Mes séances » pour une séance déclarée. */
+function origineDe(x) {
+  if (x.origine) return x.origine;              // déjà modifiée ici : on vise la version du serveur
+  return { jour: x.jour, type: x.type, duree: Number(x.duree), rpe: Number(x.rpe), commentaire: x.commentaire || "" };
+}
+
+/**
+ * Modifie (seance) ou supprime (null) une séance déclarée de la liste.
+ * Pas encore envoyée → on corrige l'envoi en attente. Déjà dans la feuille →
+ * un envoi « declaree » (ou celui déjà en attente pour la même séance est mis à jour).
+ */
+async function changerDeclaree(cle, seance) {
+  const d = (etat.declarees || []).find((x) => x.cle === cle);
+  if (!d) return;
+  const envoi = etat.envois.find((e) => e.id === cle && e.action === "declarer");
+  if (envoi) {
+    if (seance) { envoi.donnees.seance = seance; envoi.resume = seance.type + " · " + jourCourt(seance.date); await envoiMettre(envoi); }
+    else await envoiSupprimer(envoi.id);
+    await rafraichirLocaux();
+    rendre();
+    return;
+  }
+
+  const origine = origineDe(d);
+  const liste = etat.charge.page.dernieres;
+  const i = Number(cle.replace("srv-", ""));
+  // Affiché tout de suite ; « origine » garde la version que le serveur connaît.
+  if (seance) {
+    liste[i] = { date: jourCourt(seance.date).split(" ")[1], jour: seance.date, type: seance.type, duree: seance.duree,
+                 rpe: seance.rpe, charge: seance.duree * seance.rpe, commentaire: seance.commentaire, origine: origine };
+  } else {
+    liste.splice(i, 1);
+  }
+  await kvSet("charge", etat.charge);
+
+  const deja = envoisCharge("declaree").find((e) => JSON.stringify(e.donnees.origine) === JSON.stringify(origine));
+  if (deja) {
+    deja.donnees.seance = seance;
+    await envoiMettre(deja);
+    await rafraichirLocaux();
+    synchroniser();
+  } else {
+    await envoyerCharge("declaree", { origine: origine, seance: seance },
+                        (seance ? "Modif " + seance.type : "Suppression " + d.type) + " · " + d.date);
+  }
 }
 
 /** Met une écriture du suivi de charge dans la file d'envoi (part dès qu'il y a du réseau). */
@@ -1455,14 +1512,30 @@ const actions = {
   "form-type": (d) => { etat.form.type = d.t; rendre(); },
   "form-rpe": (d) => { etat.form.rpe = etat.form.rpe === d.v ? null : d.v; rendre(); },
   "form-duree": (d) => { etat.form.duree = Math.min(300, Math.max(5, etat.form.duree + d.v)); rendre(); },
+  "decl-editer": (d) => {
+    const x = (etat.declarees || []).find((y) => y.cle === d.k);
+    if (!x) return;
+    etat.form = { cle: x.cle, type: x.type, date: x.jour, duree: Number(x.duree), rpe: Number(x.rpe), commentaire: x.commentaire || "" };
+    naviguer("declarer");
+  },
+  "decl-supprimer": async () => {
+    if (!confirm("Supprimer cette séance de ton suivi ?")) return;
+    const cle = etat.form.cle;
+    etat.form = null;
+    history.back();
+    await changerDeclaree(cle, null);
+    toast("Séance supprimée.");
+  },
   "declarer-ok": async () => {
     const f = etat.form;
     if (!f.type) { toast("Choisis un type de séance."); return; }
     if (!f.rpe) { toast("Choisis un RPE."); return; }
     if (!(f.duree >= 1 && f.duree <= 300)) { toast("Durée entre 1 et 300 min."); return; }
     const seance = { date: f.date, type: f.type, duree: f.duree, rpe: f.rpe, commentaire: f.commentaire.trim() };
+    const cle = f.cle;
     etat.form = null;
     history.back();
+    if (cle) { await changerDeclaree(cle, seance); toast("Séance modifiée."); return; }
     await envoyerCharge("declarer", { seance: seance }, seance.type + " · " + jourCourt(seance.date));
     toast(etat.enLigne ? "Séance déclarée." : "Séance déclarée. Envoi dès que le réseau revient.");
   },
