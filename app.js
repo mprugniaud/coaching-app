@@ -40,6 +40,7 @@ const etat = {
   commentaires: {},    // exos dont la zone de commentaire est dépliée
   telechargements: {}, // clé → {fait, total, erreurs}
   majA: 0,             // dernière mise à jour réussie du programme (ms)
+  actualisation: false, // « Actualiser » en cours : bouton qui tourne
   charge: null,        // réponse de ?api=charge (suivi de fatigue), gardée hors ligne
   form: null,          // séance en cours de déclaration
   progEdit: null,      // séance programmée en cours de modification
@@ -357,6 +358,25 @@ function rendreDiscret() {
   const a = document.activeElement;
   if (etat.vue === "seance" && a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) return;
   rendre();
+}
+
+/** Bouton « Actualiser » : icône qui tourne et désactivé pendant l'actualisation. */
+function boutonActualiser(libelle) {
+  const enCours = etat.actualisation;
+  return `<button class="btn sm outline" data-a="actualiser" ${etat.enLigne && !enCours ? "" : "disabled"}>
+    ${ic("rafraichir", "sm" + (enCours ? " tourne" : ""))}${enCours ? "Actualisation…" : libelle || "Actualiser"}</button>`;
+}
+
+/** Programme ET charge relus ensemble, avec un seul message à la fin. */
+async function actualiser() {
+  if (etat.actualisation) return;
+  etat.actualisation = true;
+  rendre();
+  const [prog, charge] = await Promise.all([majProgramme(true), majCharge(true)]);
+  etat.actualisation = false;
+  rendre();
+  toast(prog ? "✓ Programme" + (charge && etat.charge && etat.charge.equipe ? " et charge" : "") + " à jour"
+             : "Mise à jour impossible : vérifie ta connexion.", prog ? 2500 : 5000);
 }
 
 /** Suivi de charge (même lien perso). Gardé sur le téléphone pour l'afficher hors réseau. */
@@ -861,7 +881,7 @@ function vueAccueil() {
 
   if (!p) {
     return h + `<div class="card vide-etat stack"><p>Ton programme n'est pas encore sur le téléphone.</p>
-      <button class="btn" data-a="maj">${ic("telecharger")}Télécharger mon programme</button></div>` + onglets("seances");
+      ${boutonActualiser("Télécharger mon programme")}</div>` + onglets("seances");
   }
 
   h += carteProchaine() + tuilesSemaine();
@@ -881,7 +901,7 @@ function vueAccueil() {
   const d = new Date(p.maj);
   h += `<div class="row between mt"><span class="xs subtle">Mis à jour le ${d.toLocaleDateString("fr-FR")} à
       ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
-    <button class="btn sm outline" data-a="maj" ${etat.enLigne ? "" : "disabled"}>${ic("rafraichir", "sm")}Actualiser</button></div>`;
+    ${boutonActualiser()}</div>`;
   if (etat.config.demo) {
     h += '<div id="demo-envoi"></div>';
     kvGet("demoEnvoi").then(afficherEnvoiDemo);
@@ -1311,7 +1331,7 @@ function vueCharge() {
   let h = `<div class="top"><div><p class="muted sm">Suivi de fatigue</p><h1>Ta charge</h1></div>${statut()}</div>`;
   if (!C) {
     return h + `<div class="card vide-etat stack"><p>Ta charge n'est pas encore sur le téléphone.</p>
-      <button class="btn" data-a="maj-charge" ${etat.enLigne ? "" : "disabled"}>${ic("rafraichir")}Télécharger</button></div>` + onglets("charge");
+      ${boutonActualiser("Télécharger")}</div>` + onglets("charge");
   }
   if (!C.equipe) {
     return h + `<div class="card stack"><h3>Pas encore activé</h3>
@@ -1369,7 +1389,7 @@ function vueCharge() {
   const d = new Date(C.maj);
   h += `<div class="row between mt"><span class="xs subtle">Mis à jour le ${d.toLocaleDateString("fr-FR")} à
       ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
-    <button class="btn sm outline" data-a="maj-charge" ${etat.enLigne ? "" : "disabled"}>${ic("rafraichir", "sm")}Actualiser</button></div>`;
+    ${boutonActualiser()}</div>`;
   return h + onglets("charge");
 }
 
@@ -1546,7 +1566,7 @@ const actions = {
     changerConfig(c);
   },
   "demo": () => changerConfig({ url: "", cle: "", demo: true }),
-  "maj": () => majProgramme(false),
+  "actualiser": () => actualiser(),
   "semaine": (d) => { etat.semaine = Number(d.id); naviguer("semaine"); },
   "ouvrir": (d) => {
     etat.apercu = d.ref;
@@ -1563,7 +1583,7 @@ const actions = {
   // Suivi de charge
   "onglet-seances": () => allerA("accueil"),
   "onglet-charge": () => { naviguer("charge"); if (etat.enLigne && !etat.charge) majCharge(false); },
-  "maj-charge": () => majCharge(false),
+
   "declarer": () => {
     etat.form = { type: "", date: isoLocal(new Date()), duree: (etat.charge && etat.charge.page.dureeDefaut) || 60, rpe: null, commentaire: "" };
     naviguer("declarer");

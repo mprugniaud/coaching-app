@@ -329,3 +329,7 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 .point { width: 10px; height: 10px; border-radius: 99px; background: var(--muted-2); }
 .point.on { background: var(--success); }
 .liste .item.click { cursor: pointer; }
+
+/* Icône d'actualisation qui tourne */
+@keyframes tourne { to { transform: rotate(360deg); } }
+svg.i.tourne { animation: tourne .9s linear infinite; }
