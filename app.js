@@ -18,7 +18,10 @@ const $repos = document.getElementById("repos");
 const $toast = document.getElementById("toast");
 
 /** Vidéos téléchargées en même temps (Apps Script accepte des appels simultanés). */
-const TELECHARGEMENTS_PARALLELES = 4;
+const TELECHARGEMENTS_PARALLELES = 6;
+
+/** Programme jugé assez frais pour ne pas le redemander avant de télécharger (ms). */
+const PROGRAMME_FRAIS = 5 * 60 * 1000;
 
 /** Version de la séance en cours sauvegardée : une ancienne est abandonnée. */
 const VERSION_SEANCE = 2;
@@ -36,6 +39,7 @@ const etat = {
   historique: {},      // ref → résumé des séances faites avec l'app (sur ce téléphone)
   commentaires: {},    // exos dont la zone de commentaire est dépliée
   telechargements: {}, // clé → {fait, total, erreurs}
+  majA: 0,             // dernière mise à jour réussie du programme (ms)
   videoEls: {},        // yt → <video>, gardées d'un rendu à l'autre
   enLigne: navigator.onLine
 };
@@ -153,7 +157,7 @@ async function demarrer() {
 
   if (etat.config) {
     synchroniser();
-    if (navigator.onLine) majProgramme(true);
+    if (navigator.onLine) majProgramme(true).then(preparerSemaineEnCours);
   }
   setInterval(tic, 1000);
 }
@@ -245,6 +249,7 @@ async function majProgramme(silencieux) {
     }
     if (!rep.ok) throw new Error(rep.erreur || "réponse inattendue");
     etat.prog = rep;
+    etat.majA = Date.now();
     await kvSet("programme", rep);
     if (!silencieux) toast("Programme à jour");
   } catch (err) {
@@ -270,8 +275,28 @@ function majSeanceDepuisProgramme() {
   sauver();
 }
 
+/**
+ * À l'ouverture de l'app, avec du réseau : les vidéos de la semaine en cours
+ * sont copiées en arrière-plan, pour qu'une séance ouverte ensuite soit prête.
+ * Rien si le téléphone est en mode « économie de données ».
+ */
+function preparerSemaineEnCours(ok) {
+  const sem = semaines()[0];
+  const c = navigator.connection;
+  if (!ok || !sem || (c && c.saveData)) return;
+  preparerHorsLigne("sem-" + sem.sheetId, sem.seances.map((s) => s.ref), true);
+}
+
 /** Copie une vidéo du Drive sur le téléphone. */
-async function telechargerVideo(yt) {
+const videosEnCours = {};
+function telechargerVideo(yt) {
+  if (!videosEnCours[yt]) {
+    videosEnCours[yt] = telechargerVideo_(yt).finally(() => { delete videosEnCours[yt]; });
+  }
+  return videosEnCours[yt];
+}
+
+async function telechargerVideo_(yt) {
   const r = await fetch(etat.config.url + "?api=video&cle=" + encodeURIComponent(etat.config.cle) +
                         "&yt=" + encodeURIComponent(yt));
   const rep = await r.json();
@@ -314,7 +339,7 @@ async function preparerHorsLigne(cle, refs, discret) {
 
 async function preparer_(t, refs, discret) {
   rendreDiscret();
-  await majProgramme(true);
+  if (Date.now() - etat.majA > PROGRAMME_FRAIS) await majProgramme(true);
   majSeanceDepuisProgramme();
 
   const yts = new Set();
@@ -357,11 +382,26 @@ async function preparer_(t, refs, discret) {
                   : "✓ " + t.total + " vidéo(s) sur le téléphone" + (absentes ? " (" + absentes + " pas dans le Drive)" : ""), 4000);
 }
 
-/** Avancement lisible : « Recherche des vidéos… » tant que le nombre n'est pas connu. */
-function texteTelechargement(t) {
-  return t.total ? `Téléchargement ${t.fait}/${t.total}…` : "Recherche des vidéos…";
+/**
+ * Vidéos d'une séance : progression si un téléchargement tourne (celui de la
+ * séance ou celui de sa semaine), sinon bouton s'il en manque. Jamais de
+ * bouton grisé : on peut commencer la séance pendant le téléchargement.
+ */
+function barreVideos(s, v) {
+  const actif = Object.keys(etat.telechargements).length > 0;
+  if (v.ici >= v.total) return "";
+  if (actif && etat.enLigne) {
+    return `<div class="card stack" style="margin-bottom:14px"><div class="row between">
+      <span class="sm row">${ic("telecharger", "sm")}Vidéos en cours de téléchargement</span>
+      <span class="sm muted tnum">${v.ici}/${v.total}</span></div>
+      <div class="bar accent"><div style="width:${v.total ? Math.round(100 * v.ici / v.total) : 0}%"></div></div></div>`;
+  }
+  if (!etat.enLigne) {
+    return `<p class="sm muted row" style="margin-bottom:14px">${ic("horsligne", "sm")}${v.total - v.ici} vidéo(s) pas sur le téléphone (pas de réseau)</p>`;
+  }
+  return `<button class="btn outline block" style="margin-bottom:14px" data-a="preparer-seance" data-ref="${esc(s.ref)}">
+    ${ic("telecharger")}Télécharger les vidéos · ${v.total - v.ici}</button>`;
 }
-
 
 /* =============================== PROGRAMME =============================== */
 
@@ -886,8 +926,7 @@ function vueApercu() {
       ${encours ? '<span class="badge accent">En cours</span>' : faite ? `<span class="badge ok">${ic("check", "sm")}Faite</span>` : ""}</div>
     <div class="stats"><div><b>${s.exos.length}</b><span>exercices</span></div><div><b>${series}</b><span>séries</span></div>
       <div><b class="tnum">${v.ici}/${v.total}</b><span>vidéos</span></div></div>
-    ${v.ici < v.total || tel ? `<button class="btn outline block" style="margin-bottom:14px" data-a="preparer-seance" data-ref="${esc(s.ref)}" ${etat.enLigne && !tel ? "" : "disabled"}>
-      ${ic("telecharger")}${tel ? texteTelechargement(tel) : "Télécharger les vidéos"}</button>` : ""}
+    ${barreVideos(s, v)}
     ${faite && !encours ? `<h2 class="row">${ic("historique", "sm")}Ce que tu as fait</h2>` : ""}
     <div class="liste">${liste}</div>
     <div class="pied">${encours
