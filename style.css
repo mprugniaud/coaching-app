@@ -254,5 +254,20 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 }
 
 .recap .item { align-items: flex-start; }
+
+/* RPE colorés, dans le récapitulatif uniquement : vert → jaune → orange → rouge. */
+:root { --rpe-facile: #22c55e; --rpe-modere: #eab308; --rpe-dur: #f97316; --rpe-max: #ef4444; }
+.badge.rpe-facile { color: var(--rpe-facile); background: rgba(34, 197, 94, .14); border-color: transparent; }
+.badge.rpe-modere { color: var(--rpe-modere); background: rgba(234, 179, 8, .16); border-color: transparent; }
+.badge.rpe-dur { color: var(--rpe-dur); background: rgba(249, 115, 22, .15); border-color: transparent; }
+.badge.rpe-max { color: var(--rpe-max); background: rgba(239, 68, 68, .15); border-color: transparent; }
+.txt-rpe-facile { color: var(--rpe-facile); }
+.txt-rpe-modere { color: var(--rpe-modere); }
+.txt-rpe-dur { color: var(--rpe-dur); }
+.txt-rpe-max { color: var(--rpe-max); }
+:root[data-theme="light"] { --rpe-facile: #16a34a; --rpe-modere: #a16207; --rpe-dur: #c2410c; --rpe-max: #dc2626; }
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] { --rpe-facile: #16a34a; --rpe-modere: #a16207; --rpe-dur: #c2410c; --rpe-max: #dc2626; }
+}
 .recap .comm { font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
 .vide-etat { text-align: center; padding: 32px 16px; color: var(--fg-muted); }

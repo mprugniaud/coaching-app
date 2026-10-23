@@ -1071,6 +1071,11 @@ async function brancherVideos() {
   }
 }
 
+/** Couleur d'un RPE (récapitulatif) : 1–4 facile, 5–6 modéré, 7–8 dur, 9–10 max. */
+function classeRPE(v) {
+  return v >= 9 ? "rpe-max" : v >= 7 ? "rpe-dur" : v >= 5 ? "rpe-modere" : "rpe-facile";
+}
+
 function vueRecap() {
   const S = etat.seance;
   if (!S) return vueAccueil();
@@ -1085,7 +1090,7 @@ function vueRecap() {
     const comm = commentaireExo(x);
     const badge = x.saute ? '<span class="badge">Sauté</span>'
       : S.type !== "salle" ? "" : manque ? `<button class="badge danger" style="cursor:pointer" data-a="aller" data-v="${etapeIdx}">RPE ?</button>`
-      : `<span class="badge">RPE ${x.rpe}</span>`;
+      : `<span class="badge ${classeRPE(x.rpe)}">RPE ${x.rpe}</span>`;
     return `<div class="item"><div class="grow"><p style="font-weight:500">${esc(x.nom)}</p>
       ${comm ? `<p class="comm">📱 ${esc(comm)}</p>` : ""}</div>${badge}</div>`;
   }).join("");
@@ -1098,7 +1103,7 @@ function vueRecap() {
     <div class="top"><div><h1>Récapitulatif</h1><p class="muted">${esc(S.titre)} · ${esc(nomSemaine(S.onglet).titre)}</p></div></div>
     <div class="stats"><div><b class="tnum">${minutes} min</b><span>durée</span></div>
       <div><b class="tnum">${c.faites}/${c.total}</b><span>séries</span></div>
-      <div><b class="tnum">${moy}</b><span>RPE moyen</span></div></div>
+      <div><b class="tnum ${rpes.length ? "txt-" + classeRPE(num(moy)) : ""}">${moy}</b><span>RPE moyen</span></div></div>
     ${rpeSeance}
     <h2>Ce qui sera écrit dans ta feuille</h2>
     <div class="liste recap">${lignes}</div>
