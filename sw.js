@@ -5,10 +5,10 @@
  * ⚠ Changer VERSION à chaque modification d'un fichier de l'app, sinon le
  *   téléphone garde l'ancienne version en cache.
  */
-const VERSION = "ma-seance-v1";
+const VERSION = "ma-seance-v2";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "db.js", "sync.js", "demo.js",
-  "manifest.webmanifest", "icon-192.png", "icon-512.png"
+  "manifest.webmanifest", "icon-192.png", "icon-512.png", "fonts/inter.woff2"
 ];
 
 importScripts("db.js", "sync.js");

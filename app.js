@@ -1,11 +1,12 @@
 /*
  * « Ma séance » — l'app de l'élève.
  *
- * Avant la salle (avec réseau) : le programme et les vidéos des séances sont
- * copiés sur le téléphone (IndexedDB). À la salle (sans réseau) : on fait la
- * séance exercice par exercice, série par série, avec le minuteur de récup.
- * À la fin : RPE et commentaires partent dans une file, envoyée à la page web
- * du Pilotage dès que le réseau revient (voir sync.js).
+ * Avant la salle (avec réseau) : le programme et les vidéos sont copiés sur le
+ * téléphone (IndexedDB). À la salle (sans réseau) : semaine → séance → un
+ * exercice (ou un superset) par écran, séries cochées une à une avec poids et
+ * reps ajustables, minuteur de récup. À la fin : RPE et commentaires partent
+ * dans une file, envoyée à la page web du Pilotage dès que le réseau revient
+ * (voir sync.js).
  *
  * Le commentaire écrit dans la feuille est composé ICI (commentaireExo) pour
  * être montré tel quel dans le récapitulatif avant l'envoi.
@@ -16,6 +17,9 @@ const $app = document.getElementById("app");
 const $repos = document.getElementById("repos");
 const $toast = document.getElementById("toast");
 
+/** Version de la séance en cours sauvegardée : une ancienne est abandonnée. */
+const VERSION_SEANCE = 2;
+
 const etat = {
   config: null,        // {url, cle, demo}
   prog: null,          // réponse de ?api=programme
@@ -23,12 +27,42 @@ const etat = {
   envois: [],          // file d'envoi
   videos: new Set(),   // vidéos présentes sur le téléphone
   vue: "accueil",
+  semaine: null,       // sheetId de la semaine affichée
   apercu: null,        // ref de la séance affichée avant de commencer
-  edition: null,       // {i, s} : série en cours de correction
-  telechargements: {}, // ref → {fait, total, erreurs}
+  menu: null,          // indice de l'exo dont le menu est ouvert
+  commentaires: {},    // exos dont la zone de commentaire est dépliée
+  telechargements: {}, // clé → {fait, total, erreurs}
   videoEls: {},        // yt → <video>, gardées d'un rendu à l'autre
   enLigne: navigator.onLine
 };
+
+
+/* ================================ ICÔNES ================================= */
+// Tracés Lucide (ISC), en ligne : rien à charger, marche hors réseau.
+const ICONES = {
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  gauche: '<path d="m15 18-6-6 6-6"/>',
+  droite: '<path d="m9 18 6-6-6-6"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  moins: '<path d="M5 12h14"/>',
+  plusieurs: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  telecharger: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  rafraichir: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  reglages: '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  haltere: '<path d="M6 5v14"/><path d="M18 5v14"/><path d="M3 8v8"/><path d="M21 8v8"/><path d="M6 12h12"/>',
+  course: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  chrono: '<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/>',
+  sauter: '<polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/>',
+  bulle: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  horsligne: '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
+  lien: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  calendrier: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+  sansvideo: '<path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/>',
+  historique: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  envoi: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>'
+};
+const ic = (nom, cls) => `<svg class="i ${cls || ""}" viewBox="0 0 24 24" aria-hidden="true">${ICONES[nom]}</svg>`;
 
 
 /* ================================ OUTILS ================================= */
@@ -37,6 +71,8 @@ const esc = (v) => String(v === null || v === undefined ? "" : v)
   .replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const mmss = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+const num = (t) => Number(String(t).replace(",", "."));
+const fmtNum = (n) => String(Math.round(n * 100) / 100).replace(".", ",");
 
 function uuid() {
   if (self.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -60,6 +96,36 @@ function rpeRempli(v) {
   return s !== "" && s !== "0";
 }
 
+const nomCle = (n) => String(n || "").toLowerCase().replace(/\s*-\s*youtube\s*$/, "").replace(/\s+/g, " ").trim();
+
+/** « S4 (19/10-25/10) » → {titre: "S4", dates: "19/10 – 25/10"}. */
+function nomSemaine(onglet) {
+  const m = /^(.*?)\s*\((.*)\)\s*$/.exec(onglet || "");
+  return m ? { titre: m[1], dates: m[2].replace(/\s*-\s*/, " – ") } : { titre: onglet, dates: "" };
+}
+
+/** Poids prévu, en kg, lu dans la charge de Félix : « Barre +27,5 kg » → 27,5. */
+function poidsPrevu(charge) {
+  const m = /(\d+(?:[.,]\d+)?)\s*kg/i.exec(charge || "");
+  if (m) return num(m[1]);
+  const seul = /^\s*(\d+(?:[.,]\d+)?)\s*$/.exec(charge || "");
+  return seul ? num(seul[1]) : null;
+}
+
+/** Reps (ou durée) prévues : « 7/côté » → 7 ; « 35 s/côté » → 35 s ; « 8 min » → 8 min. */
+function repsPrevues(reps) {
+  const m = /^\s*(\d+)\s*(min|mn|sec|s\b|'|")?/i.exec(reps || "");
+  if (!m) return null;
+  let unite = "";
+  if (m[2]) unite = /^m/i.test(m[2]) || m[2] === "'" ? "min" : "s";
+  return { n: Number(m[1]), unite: unite };
+}
+
+function fmtReps(x, n) {
+  const u = x.repsPrevues ? x.repsPrevues.unite : "";
+  return n + (u ? " " + u : " reps");
+}
+
 
 /* ============================== DÉMARRAGE ================================ */
 
@@ -69,6 +135,10 @@ async function demarrer() {
   etat.config = await kvGet("config");
   etat.prog = await kvGet("programme");
   etat.seance = await kvGet("encours");
+  if (etat.seance && etat.seance.v !== VERSION_SEANCE) {
+    etat.seance = null;                    // séance d'une version précédente de l'app
+    await kvDel("encours");
+  }
   await rafraichirLocaux();
 
   if (!etat.config) etat.vue = "config";
@@ -80,6 +150,7 @@ async function demarrer() {
     synchroniser();
     if (navigator.onLine) majProgramme(true);
   }
+  setInterval(tic, 1000);
 }
 
 async function rafraichirLocaux() {
@@ -87,8 +158,8 @@ async function rafraichirLocaux() {
   etat.videos = new Set(await videoCles());
 }
 
-window.addEventListener("online", () => { etat.enLigne = true; synchroniser(); rendreEntete(); });
-window.addEventListener("offline", () => { etat.enLigne = false; rendreEntete(); });
+window.addEventListener("online", () => { etat.enLigne = true; synchroniser(); rendreStatut(); });
+window.addEventListener("offline", () => { etat.enLigne = false; rendreStatut(); });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   synchroniser();
@@ -97,8 +168,9 @@ document.addEventListener("visibilitychange", () => {
 
 // Bouton retour d'Android : revenir d'un écran plutôt que fermer l'app.
 window.addEventListener("popstate", (e) => {
+  if (etat.menu !== null) { etat.menu = null; rendre(); return; }
   const vue = (e.state && e.state.vue) || "accueil";
-  if (etat.vue === "seance" || etat.vue === "recap") sortirSeance();
+  if (etat.vue === "seance" && vue !== "recap" && vue !== "seance") sortirSeance();
   etat.vue = vue === "seance" && !etat.seance ? "accueil" : vue;
   rendre();
 });
@@ -110,6 +182,21 @@ function naviguer(vue) {
   history.pushState({ vue: vue }, "");
   rendre();
   window.scrollTo(0, 0);
+}
+
+/** Remplace l'écran courant sans laisser d'entrée « retour » (fin de séance…). */
+function allerA(vue) {
+  if (etat.vue === "seance") sortirSeance();
+  etat.vue = vue;
+  history.replaceState({ vue: vue }, "");
+  rendre();
+  window.scrollTo(0, 0);
+}
+
+/** Chaque seconde : chrono de la séance, sans tout redessiner. */
+function tic() {
+  const el = document.getElementById("chrono");
+  if (el && etat.seance) el.textContent = mmss(Math.floor((Date.now() - etat.seance.debut) / 1000));
 }
 
 
@@ -130,7 +217,7 @@ async function synchroniser() {
           " dans ta feuille" + (ignores.length ? " — non retrouvés : " + ignores.join(", ") : ""), 5000);
   }
   if (etat.envois.some((e) => !e.refuse)) syncArrierePlan();
-  if (etat.vue === "accueil") rendre(); else rendreEntete();
+  if (["accueil", "semaine"].includes(etat.vue)) rendre(); else rendreStatut();
 }
 
 /** Laisse Android envoyer la file plus tard, même l'app fermée. */
@@ -157,22 +244,44 @@ async function majProgramme(silencieux) {
     if (!silencieux) toast("Programme à jour");
   } catch (err) {
     if (!silencieux) toast("Mise à jour impossible : " + err.message, 5000);
+    return false;
   }
-  if (etat.vue === "accueil" || etat.vue === "apercu") rendre();
+  if (["accueil", "semaine", "apercu"].includes(etat.vue)) rendre();
+  return true;
 }
 
-async function preparerHorsLigne(ref) {
-  const s = trouverSeance(ref);
-  if (!s || etat.telechargements[ref]) return;
-  const yts = [...new Set(s.seance.exos.filter((x) => x.video && x.yt).map((x) => x.yt))]
-    .filter((yt) => !etat.videos.has(yt));
-  if (!yts.length) { toast("Toutes les vidéos disponibles sont déjà sur le téléphone."); return; }
+/**
+ * Télécharge les vidéos manquantes d'une liste de séances. Le programme est
+ * relu d'abord : une vidéo déposée depuis la dernière mise à jour (ou un lien
+ * corrigé dans la feuille) est ainsi prise en compte.
+ */
+async function preparerHorsLigne(cle, refs) {
+  if (etat.telechargements[cle]) return;
+  const t = { fait: 0, total: 0, erreurs: 0, message: "" };
+  etat.telechargements[cle] = t;
+  rendre();
+  await majProgramme(true);
+
+  const yts = new Set();
+  let absentes = 0;
+  refs.forEach((ref) => {
+    const s = trouverSeance(ref);
+    if (!s) return;
+    s.seance.exos.forEach((x) => {
+      if (x.yt && x.video && !etat.videos.has(x.yt)) yts.add(x.yt);
+      if (x.yt && !x.video) absentes++;
+    });
+  });
+  t.total = yts.size;
+  if (!yts.size) {
+    delete etat.telechargements[cle];
+    rendre();
+    toast(absentes ? absentes + " vidéo(s) pas encore dans le Drive." : "Tout est déjà sur le téléphone.");
+    return;
+  }
 
   // Sans ça, Android peut vider le stockage d'une app peu utilisée.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-
-  const t = { fait: 0, total: yts.length, erreurs: 0, message: "" };
-  etat.telechargements[ref] = t;
   rendre();
   for (const yt of yts) {
     try {
@@ -190,17 +299,19 @@ async function preparerHorsLigne(ref) {
     t.fait++;
     rendre();
   }
-  delete etat.telechargements[ref];
-  toast(t.erreurs ? t.erreurs + " vidéo(s) en échec : " + t.message : "✓ Séance prête hors réseau", 5000);
+  delete etat.telechargements[cle];
+  toast(t.erreurs ? t.erreurs + " vidéo(s) en échec : " + t.message
+                  : "✓ Prêt hors réseau" + (absentes ? " (" + absentes + " vidéo(s) pas dans le Drive)" : ""), 5000);
   rendre();
 }
 
 
 /* =============================== PROGRAMME =============================== */
 
+const semaines = () => (etat.prog ? etat.prog.programme.semaines : []);
+
 function trouverSeance(ref) {
-  if (!etat.prog) return null;
-  for (const sem of etat.prog.programme.semaines) {
+  for (const sem of semaines()) {
     for (const s of sem.seances) if (s.ref === ref) return { semaine: sem, seance: s };
   }
   return null;
@@ -213,82 +324,127 @@ function seanceFaite(s) {
   return s.exos.length > 0 && n / s.exos.length >= 0.8;
 }
 
-function videosSeance(s) {
-  const avec = [...new Set(s.exos.filter((x) => x.video && x.yt).map((x) => x.yt))];
-  return { total: avec.length, ici: avec.filter((yt) => etat.videos.has(yt)).length };
+function enAttente(ref) {
+  return etat.envois.some((e) => e.envoi.ref === ref && !e.refuse);
 }
 
+function videosDe(seances) {
+  const avec = new Set();
+  seances.forEach((s) => s.exos.forEach((x) => { if (x.yt && x.video) avec.add(x.yt); }));
+  const ici = [...avec].filter((yt) => etat.videos.has(yt)).length;
+  return { total: avec.size, ici: ici };
+}
 
-/* ============================ SÉANCE EN COURS ============================ */
-
-function nouvelleSeance(s, onglet) {
-  const exos = s.exos.map((x) => Object.assign({}, x, {
-    faites: Array.from({ length: x.nbSeries || 1 }, () => ({ etat: "afaire", reps: "", charge: "" })),
-    saute: false, raison: "", rpe: null, commentaire: "", rpeVisible: false
-  }));
-  // Un superset (Séries fusionnées dans la feuille) = une seule étape.
+/** Étapes d'une séance : un exo seul, ou un superset (Séries fusionnées dans la feuille). */
+function etapesDe(exos) {
   const etapes = [];
   exos.forEach((x, i) => {
     const prec = etapes[etapes.length - 1];
     if (x.groupe && prec && exos[prec[0]].groupe === x.groupe) prec.push(i);
     else etapes.push([i]);
   });
+  return etapes;
+}
+
+/** Le même exercice dans une semaine plus ancienne du programme. */
+function historique(nom, onglet) {
+  const liste = semaines();
+  const k = liste.findIndex((s) => s.onglet === onglet);
+  for (let j = k + 1; j < liste.length; j++) {
+    for (const s of liste[j].seances) {
+      const x = s.exos.find((e) => nomCle(e.nom) === nomCle(nom));
+      if (x) return { semaine: nomSemaine(liste[j].onglet).titre, x: x };
+    }
+  }
+  return null;
+}
+
+
+/* ============================ SÉANCE EN COURS ============================ */
+
+function nouvelleSeance(s, onglet) {
+  const exos = s.exos.map((x) => {
+    const poids = s.type === "salle" ? poidsPrevu(x.charge) : null;
+    const reps = repsPrevues(x.reps);
+    return Object.assign({}, x, {
+      poidsPrevu: poids,
+      repsPrevues: reps,
+      sets: Array.from({ length: x.nbSeries || 1 }, () => ({ fait: false, poids: poids, reps: reps ? reps.n : null })),
+      saute: false, raison: "", rpe: null, commentaire: ""
+    });
+  });
   return {
-    ref: s.ref, titre: s.titre, type: s.type, onglet: onglet,
-    debut: Date.now(), exos: exos, etapes: etapes, etape: 0, repos: null, rpePied: null
+    v: VERSION_SEANCE, ref: s.ref, titre: s.titre, type: s.type, onglet: onglet,
+    debut: Date.now(), exos: exos, etapes: etapesDe(exos), etape: 0, repos: null, rpePied: null
   };
 }
 
 function exoTermine(x) {
-  return x.saute || x.faites.every((se) => se.etat !== "afaire");
+  return x.saute || x.sets.every((se) => se.fait);
+}
+
+function compteSeries(S) {
+  let faites = 0, total = 0;
+  S.exos.forEach((x) => {
+    if (x.saute) return;
+    total += x.sets.length;
+    faites += x.sets.filter((se) => se.fait).length;
+  });
+  return { faites: faites, total: total };
 }
 
 /**
- * Après une série : la récup démarre quand le TOUR est fini (tous les exos
- * du superset ont fait cette série) et qu'il reste des séries à faire.
+ * Après une série cochée : la récup démarre quand le TOUR est fini (tous les
+ * exos du superset ont fait cette série) — y compris après la dernière série,
+ * pour souffler avant l'exercice suivant. Pas de récup à la toute fin.
  */
 function apresSerie(s) {
   const S = etat.seance;
   const groupe = S.etapes[S.etape].map((k) => S.exos[k]).filter((x) => !x.saute);
-  const tourFini = groupe.every((x) => s >= x.faites.length || x.faites[s].etat !== "afaire");
-  const reste = groupe.some((x) => x.faites.some((se) => se.etat === "afaire"));
-  if (!reste) { finRepos(); return; }      // dernière série : place au RPE
+  const tourFini = groupe.every((x) => s >= x.sets.length || x.sets[s].fait);
   if (!tourFini) return;
+  const reste = groupe.some((x) => x.sets.some((se) => !se.fait));
+  const derniere = S.etape === S.etapes.length - 1;
+  if (!reste && derniere) { finRepos(); return; }
+
   const sec = Math.max(0, ...groupe.map((x) => x.recupSec || 0));
-  if (sec > 0) demarrerRepos(sec);
+  if (!sec) return;
+  const suite = reste ? "Série suivante" : "Ensuite : " + S.exos[S.etapes[S.etape + 1][0]].nom;
+  demarrerRepos(sec, suite);
 }
 
-/** Commentaire écrit dans la feuille, à droite du RPE. */
+/** Écart d'une série au programme : « 3 reps @ 30 kg », « 30 kg », ou "". */
+function ecartSerie(x, se, complet) {
+  const parts = [];
+  if (x.repsPrevues && se.reps !== null && (complet || se.reps !== x.repsPrevues.n)) parts.push(fmtReps(x, se.reps));
+  if (x.poidsPrevu !== null && se.poids !== null && (complet || se.poids !== x.poidsPrevu)) parts.push(fmtNum(se.poids) + " kg");
+  return parts.join(" @ ");
+}
+
+/**
+ * Commentaire écrit dans la feuille, à droite du RPE. Les séries consécutives
+ * au même écart sont regroupées : « S2–S4 : 30 kg · S3 : non faite ».
+ */
 function commentaireExo(x) {
   const libre = (x.commentaire || "").trim();
-  if (x.saute) {
-    return ["⏭ sauté" + (x.raison ? " — " + x.raison : ""), libre].filter(Boolean).join(" · ");
-  }
-  const parts = [];
-  x.faites.forEach((se, i) => {
-    const n = "S" + (i + 1);
+  if (x.saute) return ["⏭ sauté" + (x.raison ? " — " + x.raison : ""), libre].filter(Boolean).join(" · ");
+
+  const items = x.sets.map((se, i) => {
     const enPlus = i >= (x.nbSeries || 1);
-    if (se.etat === "afaire" || se.etat === "nonfaite") {
-      if (!enPlus) parts.push(n + " : non faite");
-    } else if (se.etat === "modif" || enPlus) {
-      parts.push(n + (enPlus ? " (en plus)" : "") + " : " + resumeSerie(se, x));
-    }
+    if (!se.fait) return enPlus ? null : "non faite";
+    if (enPlus) return "en plus" + (ecartSerie(x, se, true) ? ", " + ecartSerie(x, se, true) : "");
+    return ecartSerie(x, se, false) || null;
   });
+  const parts = [];
+  for (let i = 0; i < items.length; i++) {
+    if (!items[i]) continue;
+    let j = i;
+    while (j + 1 < items.length && items[j + 1] === items[i]) j++;
+    parts.push((i === j ? "S" + (i + 1) : "S" + (i + 1) + "–S" + (j + 1)) + " : " + items[i]);
+    i = j;
+  }
   if (libre) parts.push(libre);
   return parts.join(" · ");
-}
-
-function resumeSerie(se, x) {
-  const reps = se.reps || (se.charge ? "" : x.reps);
-  const r = reps ? (/^\d+$/.test(reps) ? reps + " reps" : reps) : "";
-  const c = se.charge ? (r ? "@ " : "") + se.charge : "";
-  return [r, c].filter(Boolean).join(" ") || "faite";
-}
-
-/** Dernière charge corrigée avant la série s : proposée pour la suivante. */
-function chargePrecedente(x, s) {
-  for (let k = s - 1; k >= 0; k--) if (x.faites[k].charge) return x.faites[k].charge;
-  return "";
 }
 
 function commencer(ref) {
@@ -296,6 +452,7 @@ function commencer(ref) {
   if (!t) return;
   if (etat.seance && !confirm("Une autre séance est en cours. L'abandonner ?")) return;
   etat.seance = nouvelleSeance(t.seance, t.semaine.onglet);
+  etat.commentaires = {};
   sauver();
   activerSon();
   naviguer("seance");
@@ -343,11 +500,8 @@ async function enregistrerSeance() {
   await kvDel("encours");
   sortirSeance();
   etat.seance = null;
-  etat.vue = "accueil";
-  history.replaceState({ vue: "accueil" }, "");
   await rafraichirLocaux();
-  rendre();
-  window.scrollTo(0, 0);
+  allerA("semaine");
   toast(etat.enLigne ? "Séance enregistrée, envoi en cours…" : "Séance enregistrée. Envoi dès que le réseau revient.", 4000);
   synchroniser();
   syncArrierePlan();
@@ -360,8 +514,8 @@ let minuteurRepos = null;
 let audio = null;
 let verrouEcran = null;
 
-function demarrerRepos(sec) {
-  etat.seance.repos = { fin: Date.now() + sec * 1000, sonne: false };
+function demarrerRepos(sec, suite) {
+  etat.seance.repos = { fin: Date.now() + sec * 1000, total: sec, suite: suite || "", sonne: false };
   sauver();
   afficherRepos();
 }
@@ -373,23 +527,31 @@ function afficherRepos() {
   $repos.hidden = !visible;
   document.body.classList.toggle("avec-repos", visible);
   if (!visible) return;
-  $repos.innerHTML =
-    '<div class="doux">Récup</div><div class="temps"></div>' +
-    '<div class="ligne"><button data-a="repos-moins">−15 s</button>' +
-    '<button data-a="repos-plus">+15 s</button>' +
-    '<button class="principal" data-a="repos-fin">Passer</button></div>';
+
+  const C = 2 * Math.PI * 66;
+  $repos.innerHTML = `
+    <div class="xs subtle" style="font-weight:600;letter-spacing:.06em;text-transform:uppercase">Récup</div>
+    <div class="anneau"><svg viewBox="0 0 150 150"><circle class="fond" cx="75" cy="75" r="66"/>
+      <circle class="prog" cx="75" cy="75" r="66" stroke-dasharray="${C}" stroke-dashoffset="0"/></svg>
+      <div class="temps"></div></div>
+    <div class="suivant">${esc(R.suite)}</div>
+    <div class="row"><button class="btn outline" data-a="repos-moins">−15 s</button>
+      <button class="btn outline" data-a="repos-plus">+15 s</button>
+      <button class="btn" data-a="repos-fin">Passer</button></div>`;
   const $t = $repos.querySelector(".temps");
-  const tic = () => {
-    const reste = Math.ceil((R.fin - Date.now()) / 1000);
-    if (reste > 0) { $t.textContent = mmss(reste); return; }
-    $t.textContent = "C'est reparti !";
+  const $p = $repos.querySelector(".prog");
+  const maj = () => {
+    const resteMs = R.fin - Date.now();
+    const reste = Math.ceil(resteMs / 1000);
+    $p.setAttribute("stroke-dashoffset", String(C * (1 - Math.max(0, resteMs) / (R.total * 1000))));
+    if (reste > 0) { $t.textContent = mmss(reste); $repos.classList.remove("fini"); return; }
+    $t.textContent = "Go";
     $repos.classList.add("fini");
     if (!R.sonne) { R.sonne = true; sauver(); signalFin(); }
     if (reste < -8) finRepos();
   };
-  $repos.classList.remove("fini");
-  tic();
-  minuteurRepos = setInterval(tic, 250);
+  maj();
+  minuteurRepos = setInterval(maj, 250);
 }
 
 function finRepos() {
@@ -439,133 +601,196 @@ async function garderEcran(actif) {
 /* ================================ RENDU ================================== */
 
 function rendre() {
-  const vues = { config: vueConfig, accueil: vueAccueil, apercu: vueApercu,
+  const vues = { config: vueConfig, accueil: vueAccueil, semaine: vueSemaine, apercu: vueApercu,
                  seance: vueSeance, recap: vueRecap, reglages: vueReglages };
-  $app.innerHTML = (vues[etat.vue] || vueAccueil)();
+  $app.innerHTML = (vues[etat.vue] || vueAccueil)() + (etat.menu !== null ? vueMenu() : "");
   if (etat.vue === "seance") {
     brancherVideos();
     afficherRepos();
     garderEcran(true);
   } else {
     $repos.hidden = true;
+    document.body.classList.remove("avec-repos");
   }
 }
 
-function pastilleStatut() {
+function statut() {
   const attente = etat.envois.filter((e) => !e.refuse).length;
-  if (attente) return '<span class="pastille attente" id="statut">⏳ ' + attente + " à envoyer</span>";
-  if (!etat.enLigne) return '<span class="pastille off" id="statut">Hors réseau</span>';
-  return '<span class="pastille ok" id="statut">✓ À jour</span>';
+  if (attente) return `<span class="badge accent" id="statut"><span class="dot"></span>${attente} à envoyer</span>`;
+  if (!etat.enLigne) return `<span class="badge" id="statut">${ic("horsligne", "sm")}Hors réseau</span>`;
+  return `<span class="badge ok" id="statut"><span class="dot"></span>À jour</span>`;
 }
 
-function rendreEntete() {
+function rendreStatut() {
   const p = document.getElementById("statut");
-  if (p) p.outerHTML = pastilleStatut();
+  if (p) p.outerHTML = statut();
 }
 
 function vueConfig() {
   return `
-    <h1>Ma séance</h1>
-    <p class="doux">Colle ton lien perso, celui de « 📱 Déclarer mes séances » en haut de ta feuille
-      (il se termine par <b>?cle=…</b>).</p>
-    <div class="pile">
-      <textarea id="lien" placeholder="https://script.google.com/macros/s/…/exec?cle=…"></textarea>
-      <button class="principal plein" data-a="config-ok">Enregistrer</button>
-      <button class="plein" data-a="demo">Essayer en démo</button>
-    </div>`;
+    <div class="top"><div><p class="muted sm">Bienvenue</p><h1>Ma séance</h1></div></div>
+    <div class="card stack">
+      <h3>Ton lien perso</h3>
+      <p class="muted sm">Celui du bouton « 📱 Déclarer mes séances » en haut de ta feuille. Il se termine par <b>?cle=…</b></p>
+      <textarea id="lien" class="champ" placeholder="https://script.google.com/macros/s/…/exec?cle=…"></textarea>
+      <button class="btn block lg" data-a="config-ok">Continuer</button>
+    </div>
+    <button class="btn ghost block mt" data-a="demo">Essayer en démo</button>`;
+}
+
+function alertesEnvois() {
+  return etat.envois.filter((e) => e.refuse).map((e) => `
+    <div class="card warn stack"><div><h3>Envoi refusé</h3><p class="muted sm">${esc(e.resume)} — ${esc(e.erreur)}</p></div>
+      <div class="row"><button class="btn sm" data-a="reessayer" data-id="${esc(e.id)}">Réessayer</button>
+      <button class="btn sm danger" data-a="supprimer-envoi" data-id="${esc(e.id)}">Supprimer</button></div></div>`).join("");
+}
+
+function carteEnCours() {
+  if (!etat.seance) return "";
+  const c = compteSeries(etat.seance);
+  return `<div class="card focus click" data-a="reprendre">
+    <div class="row"><div class="tile">${ic("chrono")}</div>
+      <div class="grow"><p class="xs subtle">En cours</p><h3>${esc(etat.seance.titre)} · ${esc(nomSemaine(etat.seance.onglet).titre)}</h3>
+        <p class="sm muted tnum">${c.faites}/${c.total} séries</p></div>
+      ${ic("droite")}</div></div>`;
 }
 
 function vueAccueil() {
   const p = etat.prog;
-  let h = `<div class="entete"><h1>Ma séance</h1>${pastilleStatut()}</div>`;
-  if (etat.config.demo) h += '<p class="doux">Mode démo : rien n\'est envoyé à ta feuille.</p>';
-
-  etat.envois.filter((e) => e.refuse).forEach((e) => {
-    h += `<div class="carte alerte"><b>Envoi refusé : ${esc(e.resume)}</b>
-      <p class="doux">${esc(e.erreur)}</p>
-      <div class="ligne"><button data-a="reessayer" data-id="${esc(e.id)}">Réessayer</button>
-      <button class="danger" data-a="supprimer-envoi" data-id="${esc(e.id)}">Supprimer</button></div></div>`;
-  });
-
-  if (etat.seance) {
-    h += `<div class="carte encours"><h3>En cours : ${esc(etat.seance.titre)}</h3>
-      <p class="doux">${esc(etat.seance.onglet)}</p>
-      <div class="ligne"><button class="principal pousse" data-a="reprendre">Reprendre</button>
-      <button class="danger" data-a="abandonner">Abandonner</button></div></div>`;
-  }
+  const prenom = p && p.nom ? String(p.nom).split(" ")[0] : "";
+  let h = `<div class="top"><div><p class="muted sm">${prenom ? "Salut " + esc(prenom) : "Ma séance"}</p><h1>Tes semaines</h1></div>
+    <div class="row">${statut()}<button class="btn icon" data-a="reglages" aria-label="Réglages">${ic("reglages")}</button></div></div>`;
+  if (etat.config.demo) h += `<p class="sm muted" style="margin:-8px 0 14px">Mode démo : rien n'est envoyé à ta feuille.</p>`;
+  h += alertesEnvois() + carteEnCours();
 
   if (!p) {
-    h += `<p class="doux">Pas encore de programme sur le téléphone.</p>
-      <button class="principal plein" data-a="maj">Télécharger mon programme</button>`;
-  } else {
-    p.programme.semaines.forEach((sem) => {
-      h += `<h2>${esc(sem.onglet)}</h2>`;
-      if (!sem.seances.length) h += '<p class="doux">Aucune séance programmée.</p>';
-      sem.seances.forEach((s) => { h += carteSeance(s); });
-    });
-    const d = new Date(p.maj);
-    h += `<p class="doux petit">Programme du ${d.toLocaleDateString("fr-FR")} à
-      ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</p>
-      <button class="plein" data-a="maj" ${etat.enLigne ? "" : "disabled"}>↻ Mettre à jour le programme</button>`;
+    return h + `<div class="card vide-etat stack"><p>Ton programme n'est pas encore sur le téléphone.</p>
+      <button class="btn" data-a="maj">${ic("telecharger")}Télécharger mon programme</button></div>`;
   }
 
-  if (etat.config.demo) h += '<div id="demo-envoi"></div>';
-  h += '<p><button class="lien" data-a="reglages">Réglages</button></p>';
-  if (etat.config.demo) kvGet("demoEnvoi").then(afficherEnvoiDemo);
+  h += `<h2>Programme</h2>`;
+  semaines().forEach((sem, k) => {
+    const n = nomSemaine(sem.onglet);
+    const faites = sem.seances.filter(seanceFaite).length;
+    const total = sem.seances.length;
+    const v = videosDe(sem.seances);
+    h += `<div class="card click" data-a="semaine" data-id="${sem.sheetId}">
+      <div class="row"><div class="tile ${total && faites === total ? "ok" : ""}">${ic("calendrier")}</div>
+        <div class="grow"><div class="row"><h3>${esc(n.titre)}</h3>${k === 0 ? '<span class="badge accent">Cette semaine</span>' : ""}</div>
+          <p class="sm muted">${esc(n.dates)}${n.dates ? " · " : ""}${total} séance${total > 1 ? "s" : ""}</p></div>
+        ${ic("droite")}</div>
+      <div class="row mt"><div class="bar grow"><div style="width:${total ? Math.round(100 * faites / total) : 0}%"></div></div>
+        <span class="xs muted tnum">${faites}/${total} faites</span>
+        ${v.total ? `<span class="xs ${v.ici === v.total ? "" : "subtle"} tnum">· 🎬 ${v.ici}/${v.total}</span>` : ""}</div>
+    </div>`;
+  });
+
+  const d = new Date(p.maj);
+  h += `<div class="row between mt"><span class="xs subtle">Mis à jour le ${d.toLocaleDateString("fr-FR")} à
+      ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+    <button class="btn sm outline" data-a="maj" ${etat.enLigne ? "" : "disabled"}>${ic("rafraichir", "sm")}Actualiser</button></div>`;
+  if (etat.config.demo) {
+    h += '<div id="demo-envoi"></div>';
+    kvGet("demoEnvoi").then(afficherEnvoiDemo);
+  }
   return h;
 }
 
 function afficherEnvoiDemo(envoi) {
   const el = document.getElementById("demo-envoi");
   if (!el || !envoi) return;
-  el.innerHTML = `<h2>Dernier envoi (démo)</h2><div class="carte">
-    ${envoi.exos.map((x) => `<div class="recap-ligne"><b>${esc(x.nom)}</b> — RPE ${esc(x.rpe || "—")}
-      ${x.commentaire ? `<div class="comm">📱 ${esc(x.commentaire)}</div>` : ""}</div>`).join("")}
-    ${envoi.rpePied ? `<p>RPE séance : ${esc(envoi.rpePied)}</p>` : ""}</div>`;
+  el.innerHTML = `<h2>Dernier envoi (démo)</h2><div class="liste recap">
+    ${envoi.exos.map((x) => `<div class="item"><div class="grow"><b>${esc(x.nom)}</b>
+      ${x.commentaire ? `<p class="comm">📱 ${esc(x.commentaire)}</p>` : ""}</div>
+      <span class="badge">${x.rpe ? "RPE " + esc(x.rpe) : "—"}</span></div>`).join("")}</div>`;
 }
 
-function carteSeance(s) {
-  const v = videosSeance(s);
-  const t = etat.telechargements[s.ref];
-  const attente = etat.envois.some((e) => e.envoi.ref === s.ref && !e.refuse);
-  const badges = [
-    `<span class="badge">${s.type === "course" ? "Course" : "Salle"} · ${s.exos.length} exos</span>`,
-    seanceFaite(s) ? '<span class="badge ok">✓ faite</span>' : "",
-    attente ? '<span class="badge">⏳ à envoyer</span>' : "",
-    v.total ? `<span class="badge ${v.ici === v.total ? "ok" : ""}">🎬 ${v.ici}/${v.total} hors réseau</span>`
-            : '<span class="badge">sans vidéo</span>'
-  ].join(" ");
-  let bas;
+function semaineCourante() {
+  return semaines().find((s) => s.sheetId === etat.semaine) || semaines()[0];
+}
+
+function vueSemaine() {
+  const sem = semaineCourante();
+  if (!sem) return vueAccueil();
+  const n = nomSemaine(sem.onglet);
+  const cle = "sem-" + sem.sheetId;
+  const t = etat.telechargements[cle];
+  const v = videosDe(sem.seances);
+
+  let h = `<button class="back" data-a="retour">${ic("gauche", "sm")}Semaines</button>
+    <div class="top"><div><h1>${esc(n.titre)}</h1><p class="muted">${esc(n.dates)}</p></div>${statut()}</div>`;
+  h += alertesEnvois();
   if (t) {
-    bas = `<p class="doux">Téléchargement des vidéos ${t.fait}/${t.total}…</p>
-      <div class="progression"><div style="width:${Math.round(100 * t.fait / t.total)}%"></div></div>`;
+    h += `<div class="card stack"><div class="row between"><span class="sm">Téléchargement des vidéos…</span>
+      <span class="sm muted tnum">${t.fait}/${t.total}</span></div>
+      <div class="bar accent"><div style="width:${t.total ? Math.round(100 * t.fait / t.total) : 5}%"></div></div></div>`;
+  } else if (v.ici < v.total || !v.total) {
+    h += `<button class="btn outline block" data-a="preparer" data-id="${sem.sheetId}" ${etat.enLigne ? "" : "disabled"}>
+      ${ic("telecharger")}Préparer hors réseau${v.total ? ` · ${v.total - v.ici} vidéo${v.total - v.ici > 1 ? "s" : ""}` : ""}</button>`;
   } else {
-    bas = `<div class="ligne">
-      <button class="principal pousse" data-a="ouvrir" data-ref="${esc(s.ref)}">Ouvrir</button>
-      ${v.ici < v.total ? `<button data-a="preparer" data-ref="${esc(s.ref)}" ${etat.enLigne ? "" : "disabled"}>⬇ Préparer hors réseau</button>` : ""}
-    </div>`;
+    h += `<p class="sm muted row">${ic("check", "sm")}Toutes les vidéos de la semaine sont sur le téléphone.</p>`;
   }
-  return `<div class="carte"><h3>${esc(s.titre)}</h3><div class="ligne">${badges}</div>
-    <p class="doux petit">${esc(s.exos.map((x) => x.nom).join(" · "))}</p>${bas}</div>`;
+
+  h += `<h2>Séances</h2>`;
+  if (!sem.seances.length) h += `<div class="card vide-etat">Aucune séance programmée.</div>`;
+  sem.seances.forEach((s) => {
+    const series = s.exos.reduce((a, x) => a + (x.nbSeries || 1), 0);
+    const vs = videosDe([s]);
+    const encours = etat.seance && etat.seance.ref === s.ref;
+    const badges = [
+      encours ? '<span class="badge accent">En cours</span>' : "",
+      seanceFaite(s) ? `<span class="badge ok">${ic("check", "sm")}Faite</span>` : "",
+      enAttente(s.ref) ? '<span class="badge accent">À envoyer</span>' : "",
+      vs.total && vs.ici < vs.total ? `<span class="badge">${ic("sansvideo", "sm")}${vs.total - vs.ici}</span>` : ""
+    ].join("");
+    h += `<div class="card click" data-a="ouvrir" data-ref="${esc(s.ref)}">
+      <div class="row"><div class="tile ${seanceFaite(s) ? "ok" : ""}">${ic(s.type === "course" ? "course" : "haltere")}</div>
+        <div class="grow"><h3>${esc(s.titre)}</h3>
+          <p class="sm muted">${s.type === "course" ? "Course" : "Salle"} · ${s.exos.length} exos · ${series} séries</p></div>
+        ${ic("droite")}</div>
+      ${badges ? `<div class="row wrap mt">${badges}</div>` : ""}</div>`;
+  });
+  return h;
 }
 
 function vueApercu() {
   const t = trouverSeance(etat.apercu);
-  if (!t) return vueAccueil();
+  if (!t) return vueSemaine();
   const s = t.seance;
-  const v = videosSeance(s);
-  return `
-    <p><button class="lien" data-a="retour">← Séances</button></p>
-    <h1>${esc(s.titre)}</h1><p class="doux">${esc(t.semaine.onglet)}</p>
-    ${v.ici < v.total ? `<div class="carte"><b>${v.total - v.ici} vidéo(s) pas encore sur le téléphone.</b>
-      <p class="doux">À faire avant la salle, avec du réseau.</p>
-      <button class="plein" data-a="preparer" data-ref="${esc(s.ref)}" ${etat.enLigne ? "" : "disabled"}>⬇ Préparer hors réseau</button></div>` : ""}
-    <div class="carte">${s.exos.map((x) => `
-      <div class="recap-ligne"><b>${esc(x.nom)}</b> ${x.yt && etat.videos.has(x.yt) ? "🎬" : ""}
-        <div class="doux">${esc([x.charge, x.reps && (/^\d+$/.test(x.reps) ? x.reps + " reps" : x.reps), x.series && x.series + " séries", x.recup && x.recup !== "-" && "récup " + x.recup].filter(Boolean).join(" · "))}</div>
-        ${rpeRempli(x.rpe) ? `<div class="doux petit">RPE déjà noté : ${esc(x.rpe)}</div>` : ""}
-      </div>`).join("")}</div>
-    <div class="navbas"><button class="principal" data-a="commencer" data-ref="${esc(s.ref)}">Commencer la séance</button></div>`;
+  const v = videosDe([s]);
+  const series = s.exos.reduce((a, x) => a + (x.nbSeries || 1), 0);
+  const etapes = etapesDe(s.exos);
+  const encours = etat.seance && etat.seance.ref === s.ref;
+  const tel = etat.telechargements[s.ref];
+
+  let liste = "";
+  let n = 0;
+  etapes.forEach((e) => {
+    if (e.length > 1) {
+      const r = s.exos[e[0]].recup;
+      liste += `<div class="groupe-label">${e.length === 2 ? "Superset" : "Circuit"}${r && r !== "-" ? " · récup " + esc(r) : ""}</div>`;
+    }
+    e.forEach((i) => {
+      const x = s.exos[i];
+      n++;
+      const detail = [x.nbSeries + " × " + (x.reps || "—"), x.charge, e.length === 1 && x.recup && x.recup !== "-" ? "récup " + x.recup : ""]
+        .filter(Boolean).join(" · ");
+      liste += `<div class="item"><span class="num">${n}</span>
+        <div class="grow"><p class="trunc" style="font-weight:500">${esc(x.nom)}</p><p class="xs muted">${esc(detail)}</p></div>
+        ${x.lien && !(x.yt && etat.videos.has(x.yt)) ? `<span class="subtle" title="Vidéo pas sur le téléphone">${ic("sansvideo", "sm")}</span>` : ""}
+        ${rpeRempli(x.rpe) ? `<span class="badge">RPE ${esc(x.rpe)}</span>` : ""}</div>`;
+    });
+  });
+
+  return `<button class="back" data-a="retour">${ic("gauche", "sm")}${esc(nomSemaine(t.semaine.onglet).titre)}</button>
+    <div class="top"><div><h1>${esc(s.titre)}</h1><p class="muted">${s.type === "course" ? "Course" : "Salle"}</p></div>
+      ${seanceFaite(s) ? `<span class="badge ok">${ic("check", "sm")}Faite</span>` : ""}</div>
+    <div class="stats"><div><b>${s.exos.length}</b><span>exercices</span></div><div><b>${series}</b><span>séries</span></div>
+      <div><b class="tnum">${v.ici}/${v.total}</b><span>vidéos</span></div></div>
+    ${v.ici < v.total || tel ? `<button class="btn outline block" style="margin-bottom:14px" data-a="preparer-seance" data-ref="${esc(s.ref)}" ${etat.enLigne && !tel ? "" : "disabled"}>
+      ${ic("telecharger")}${tel ? `Téléchargement ${tel.fait}/${tel.total}…` : "Télécharger les vidéos"}</button>` : ""}
+    <div class="liste">${liste}</div>
+    <div class="pied"><button class="btn lg" data-a="${encours ? "reprendre" : "commencer"}" data-ref="${esc(s.ref)}">${encours ? "Reprendre la séance" : "Commencer la séance"}</button></div>`;
 }
 
 function vueSeance() {
@@ -573,73 +798,100 @@ function vueSeance() {
   if (!S) return vueAccueil();
   const etape = S.etapes[S.etape];
   const dernier = S.etape === S.etapes.length - 1;
-  const lettres = etape.length > 1;
+  const c = compteSeries(S);
+  const superset = etape.length > 1;
+
   return `
-    <div class="entete"><button class="lien" data-a="quitter">← Séances</button>
-      <span class="doux">${S.etape + 1} / ${S.etapes.length}</span></div>
-    <div class="progression"><div style="width:${Math.round(100 * S.etape / S.etapes.length)}%"></div></div>
-    <h1>${esc(S.titre)}${lettres ? ' <span class="doux petit">— enchaîne les exos, récup après le tour</span>' : ""}</h1>
-    ${etape.map((i, k) => carteExo(S.exos[i], i, lettres ? String.fromCharCode(65 + k) : "")).join("")}
-    <div class="navbas">
-      <button data-a="prec" ${S.etape ? "" : "disabled"}>← Précédent</button>
-      <button class="principal" data-a="${dernier ? "terminer" : "suiv"}">${dernier ? "Terminer" : "Suivant →"}</button>
+    <div class="barre-seance">
+      <div class="row between">
+        <button class="btn icon" data-a="quitter" aria-label="Quitter">${ic("x")}</button>
+        <div class="titre"><b>${esc(S.titre)}</b><span class="sm muted tnum"><span id="chrono">${mmss(Math.floor((Date.now() - S.debut) / 1000))}</span> · ${c.faites}/${c.total} séries</span></div>
+        <button class="btn icon" data-a="terminer" aria-label="Terminer">${ic("check")}</button>
+      </div>
+      <div class="bar mt"><div style="width:${c.total ? Math.round(100 * c.faites / c.total) : 0}%"></div></div>
+    </div>
+    <div class="etape">Exercice ${S.etape + 1} / ${S.etapes.length}${superset ? ` <span class="badge accent">${etape.length === 2 ? "Superset" : "Circuit"} · récup après le tour</span>` : ""}</div>
+    ${etape.map((i, k) => carteExo(S.exos[i], i, superset ? String.fromCharCode(65 + k) : "")).join("")}
+    <div class="pied">
+      <button class="btn outline" data-a="prec" ${S.etape ? "" : "disabled"}>${ic("gauche")}Précédent</button>
+      <button class="btn" data-a="${dernier ? "terminer" : "suiv"}">${dernier ? "Terminer" : "Suivant"}${ic(dernier ? "check" : "droite")}</button>
     </div>`;
 }
 
 function carteExo(x, i, lettre) {
-  const titre = `<h3>${lettre ? `<span class="lettre">${lettre}</span>` : ""}${esc(x.nom)}</h3>`;
+  const S = etat.seance;
+  const titre = `<div class="exo-titre"><h2>${lettre ? `<span class="lettre">${lettre}</span>` : ""}${esc(x.nom)}</h2>
+    <button class="btn icon" data-a="menu" data-i="${i}" aria-label="Options">${ic("plusieurs")}</button></div>`;
+
   if (x.saute) {
-    return `<div class="exo saute"><div class="corps">${titre}
-      <p>⏭ Sauté${x.raison ? " — " + esc(x.raison) : ""}</p>
-      <button data-a="reprendre-exo" data-i="${i}">Finalement je le fais</button></div></div>`;
+    return `<div class="exo">${titre}<div class="card row"><span class="muted grow">${ic("sauter", "sm")} Sauté${x.raison ? " — " + esc(x.raison) : ""}</span>
+      <button class="btn sm outline" data-a="reprendre-exo" data-i="${i}">Je le fais</button></div></div>`;
   }
-  let video;
-  if (x.yt && etat.videos.has(x.yt)) video = `<div class="vplace" data-yt="${esc(x.yt)}"></div>`;
-  else if (x.lien) video = `<div class="sansvideo">Vidéo pas sur le téléphone${etat.enLigne ? ` — <a href="${esc(x.lien)}" target="_blank" rel="noopener">la voir en ligne</a>` : ""}</div>`;
-  else video = "";
 
-  const params = [["Charge", x.charge], ["Reps", x.reps], ["Séries", x.series], ["Récup", x.recup]]
-    .map(([k, v]) => `<div><span>${k}</span><b>${esc(v || "—")}</b></div>`).join("");
+  let media;
+  if (x.yt && etat.videos.has(x.yt)) media = `<div class="media"><div class="vplace" data-yt="${esc(x.yt)}"></div></div>`;
+  else if (x.lien) {
+    media = `<div class="media"><div class="vide">${ic("sansvideo", "lg")}<span>Vidéo pas sur le téléphone</span>
+      ${etat.enLigne ? `<a class="btn sm outline" href="${esc(x.lien)}" target="_blank" rel="noopener">${ic("lien", "sm")}La voir en ligne</a>` : ""}</div></div>`;
+  } else media = "";
 
-  const series = x.faites.map((se, s) => ligneSerie(x, se, i, s)).join("");
-  const montrerRPE = etat.seance.type === "salle" && (exoTermine(x) || x.rpe || x.rpeVisible);
-  const rpe = montrerRPE ? `<p><b>RPE de l'exo</b> <span class="doux petit">(1 = très facile, 10 = max)</span></p>
+  const chips = [x.charge, x.series && x.series + (Number(x.series) > 1 ? " séries" : " série"),
+                 x.reps && (/^\d+$/.test(x.reps) ? x.reps + " reps" : x.reps), x.recup && x.recup !== "-" ? "récup " + x.recup : ""]
+    .filter(Boolean).map((t) => `<span class="badge">${esc(t)}</span>`).join("");
+
+  const h = historique(x.nom, S.onglet);
+  const hist = h ? `<p class="historique">${ic("historique", "sm")}${esc(h.semaine)} : ${esc([h.x.charge, h.x.reps && h.x.series + " × " + h.x.reps].filter(Boolean).join(" · "))}${rpeRempli(h.x.rpe) ? " · RPE " + esc(h.x.rpe) : ""}${h.x.commentaire ? " · « " + esc(h.x.commentaire) + " »" : ""}</p>` : "";
+
+  const avecPoids = x.poidsPrevu !== null;
+  const avecReps = !!x.repsPrevues;
+  const colReps = !avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps";
+  const lignes = x.sets.map((se, s) => {
+    const poids = avecPoids ? stepper(i, s, "poids", se.poids, se.poids !== x.poidsPrevu) : "";
+    const reps = avecReps ? stepper(i, s, "reps", se.reps, se.reps !== x.repsPrevues.n)
+                          : `<div class="stepper"><span class="fixe">${esc(x.reps || "—")}</span></div>`;
+    return `<div class="set ${se.fait ? "fait" : ""}"><span class="n">${s + 1}</span>${poids}${reps}
+      <button class="check ${se.fait ? "on" : ""}" data-a="valider" data-i="${i}" data-s="${s}" aria-label="Série ${s + 1} faite">${ic("check")}</button></div>`;
+  }).join("");
+
+  const montrerRPE = S.type === "salle" && (exoTermine(x) || x.rpe);
+  const rpe = montrerRPE ? `<div class="rpe-bloc"><div class="row between"><h3>RPE de l'exercice</h3><span class="xs subtle">1 facile · 10 max</span></div>
     <div class="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
-      `<button class="${x.rpe === v ? "choisi" : ""}" data-a="rpe" data-i="${i}" data-v="${v}">${v}</button>`).join("")}</div>`
-    : (etat.seance.type === "salle" ? `<button class="lien" data-a="rpe-montrer" data-i="${i}">Donner le RPE maintenant</button>` : "");
+      `<button class="${x.rpe === v ? "on" : ""}" data-a="rpe" data-i="${i}" data-v="${v}">${v}</button>`).join("")}</div></div>` : "";
 
-  return `<div class="exo">${video}<div class="corps">${titre}
-    <div class="params">${params}</div>
+  const ouvert = etat.commentaires[i] || x.commentaire;
+  const comm = ouvert
+    ? `<textarea class="mt" data-in="comm" data-i="${i}" placeholder="Pour Félix : sensation, douleur, matériel…">${esc(x.commentaire)}</textarea>`
+    : `<button class="btn ghost sm mt" data-a="comm" data-i="${i}">${ic("bulle", "sm")}Ajouter un commentaire</button>`;
+
+  return `<div class="exo">${media}${titre}
+    <div class="chips">${chips}</div>
     ${x.consigne ? `<p class="consigne">${esc(x.consigne)}</p>` : ""}
-    ${series}
-    <div class="ligne"><button class="lien" data-a="serie-plus" data-i="${i}">+ série</button>
-      <span class="pousse"></span><button class="lien" data-a="sauter" data-i="${i}">⏭ Sauter l'exo</button></div>
-    ${rpe}
-    <p class="doux petit" style="margin-top:12px">Commentaire pour Félix (facultatif)</p>
-    <textarea data-in="comm" data-i="${i}" placeholder="Douleur, sensation, matériel…">${esc(x.commentaire)}</textarea>
-  </div></div>`;
+    ${hist}
+    <div class="sets ${avecPoids ? "" : "sans-poids"}">
+      <div class="tete"><span>#</span>${avecPoids ? "<span>Poids (kg)</span>" : ""}<span>${colReps}</span><span></span></div>
+      ${lignes}
+      <div class="ajout"><button class="btn ghost sm" data-a="serie-plus" data-i="${i}">${ic("plus", "sm")}Série</button></div>
+    </div>
+    ${rpe}${comm}</div>`;
 }
 
-function ligneSerie(x, se, i, s) {
-  const prevu = [x.reps && (/^\d+$/.test(x.reps) ? x.reps + " reps" : x.reps), x.charge].filter(Boolean).join(" @ ");
-  let detail = esc(prevu || "Série");
-  let cls = "";
-  if (se.etat === "modif") { detail = esc(resumeSerie(se, x)); cls = "modif"; }
-  if (se.etat === "nonfaite") { cls = "nonfaite"; }
-  const enPlus = s >= (x.nbSeries || 1) ? ' <span class="doux petit">(en plus)</span>' : "";
-  const classe = { afaire: "", ok: "ok", modif: "ok", nonfaite: "rate" }[se.etat];
-  let h = `<div class="serie ${classe}">
-    <span class="num">S${s + 1}</span><span class="detail ${cls}">${detail}${enPlus}</span>
-    <button data-a="editer" data-i="${i}" data-s="${s}" aria-label="Corriger">✎</button>
-    <button class="coche" data-a="coche" data-i="${i}" data-s="${s}" aria-label="Série faite">${se.etat === "nonfaite" ? "✗" : "✓"}</button></div>`;
-  if (etat.edition && etat.edition.i === i && etat.edition.s === s) {
-    h += `<div class="edition">
-      <div class="ligne"><label>Reps faites<input id="ed-reps" inputmode="numeric" value="${esc(se.reps)}" placeholder="${esc(x.reps)}"></label>
-      <label>Charge<input id="ed-charge" value="${esc(se.charge || chargePrecedente(x, s))}" placeholder="${esc(x.charge)}"></label></div>
-      <div class="ligne" style="margin-top:8px"><button class="vert pousse" data-a="edit-ok">Valider</button>
-      <button data-a="edit-nonfaite">Pas faite</button><button data-a="edit-annuler">Annuler</button></div></div>`;
-  }
-  return h;
+function stepper(i, s, champ, valeur, modif) {
+  return `<div class="stepper ${modif ? "modif" : ""}">
+    <button data-a="pas" data-i="${i}" data-s="${s}" data-champ="${champ}" data-v="-1" aria-label="Moins">${ic("moins", "sm")}</button>
+    <input inputmode="decimal" data-in="${champ}" data-i="${i}" data-s="${s}" value="${valeur === null ? "" : fmtNum(valeur)}">
+    <button data-a="pas" data-i="${i}" data-s="${s}" data-champ="${champ}" data-v="1" aria-label="Plus">${ic("plus", "sm")}</button></div>`;
+}
+
+function vueMenu() {
+  const x = etat.seance && etat.seance.exos[etat.menu];
+  if (!x) return "";
+  return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
+    <div class="poignee"></div><div class="titre">${esc(x.nom)}</div>
+    <button data-a="serie-plus" data-i="${etat.menu}">${ic("plus")}Ajouter une série</button>
+    ${x.lien && etat.enLigne ? `<button data-a="youtube" data-i="${etat.menu}">${ic("lien")}Voir sur YouTube</button>` : ""}
+    ${x.saute ? `<button data-a="reprendre-exo" data-i="${etat.menu}">${ic("droite")}Finalement je le fais</button>`
+              : `<button class="danger" data-a="sauter" data-i="${etat.menu}">${ic("sauter")}Sauter l'exercice</button>`}
+    <button data-a="menu-fermer">${ic("x")}Annuler</button></div></div>`;
 }
 
 /** Les <video> survivent aux rendus : la lecture ne repart pas à chaque geste. */
@@ -650,10 +902,10 @@ async function brancherVideos() {
     if (!v) {
       const rec = await videoGet(yt);
       if (!rec) continue;
-      if (etat.videoEls[yt]) { v = etat.videoEls[yt]; } else {
+      v = etat.videoEls[yt];
+      if (!v) {
         v = document.createElement("video");
         Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: true, controls: true });
-        v.className = "video";
         v.src = URL.createObjectURL(rec.blob);
         etat.videoEls[yt] = v;
       }
@@ -666,47 +918,55 @@ function vueRecap() {
   const S = etat.seance;
   if (!S) return vueAccueil();
   const minutes = Math.round((Date.now() - S.debut) / 60000);
-  const lignes = S.exos.map((x) => {
-    const etapeIdx = S.etapes.findIndex((e) => e.includes(S.exos.indexOf(x)));
+  const c = compteSeries(S);
+  const rpes = S.exos.filter((x) => !x.saute && x.rpe).map((x) => x.rpe);
+  const moy = rpes.length ? fmtNum(Math.round(rpes.reduce((a, b) => a + b, 0) / rpes.length * 10) / 10) : "—";
+
+  const lignes = S.exos.map((x, i) => {
+    const etapeIdx = S.etapes.findIndex((e) => e.includes(i));
     const manque = S.type === "salle" && !x.saute && !x.rpe;
     const comm = commentaireExo(x);
-    return `<div class="recap-ligne"><div class="entete"><b>${esc(x.nom)}</b>
-      <span class="${manque ? "manque" : ""}">${x.saute ? "sauté" : S.type === "salle" ? "RPE " + (x.rpe || "?") : ""}</span></div>
-      ${comm ? `<div class="comm">📱 ${esc(comm)}</div>` : ""}
-      ${manque ? `<button class="lien" data-a="aller" data-v="${etapeIdx}">Donner le RPE</button>` : ""}</div>`;
+    const badge = x.saute ? '<span class="badge">Sauté</span>'
+      : S.type !== "salle" ? "" : manque ? `<button class="badge danger" style="cursor:pointer" data-a="aller" data-v="${etapeIdx}">RPE ?</button>`
+      : `<span class="badge">RPE ${x.rpe}</span>`;
+    return `<div class="item"><div class="grow"><p style="font-weight:500">${esc(x.nom)}</p>
+      ${comm ? `<p class="comm">📱 ${esc(comm)}</p>` : ""}</div>${badge}</div>`;
   }).join("");
-  const rpeSeance = S.type === "course" ? `<h2>RPE de la séance</h2>
+
+  const rpeSeance = S.type === "course" ? `<div class="rpe-bloc"><h3>RPE de la séance</h3>
     <div class="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
-      `<button class="${S.rpePied === v ? "choisi" : ""}" data-a="rpe-pied" data-v="${v}">${v}</button>`).join("")}</div>` : "";
-  return `
-    <p><button class="lien" data-a="continuer">← Revenir à la séance</button></p>
-    <h1>Récapitulatif</h1><p class="doux">${esc(S.titre)} · ${esc(S.onglet)} · ${minutes} min</p>
-    <p class="doux petit">Voici ce qui sera écrit dans ta feuille (RPE dans sa colonne, commentaire 📱 à droite).</p>
-    <div class="carte">${lignes}</div>
+      `<button class="${S.rpePied === v ? "on" : ""}" data-a="rpe-pied" data-v="${v}">${v}</button>`).join("")}</div></div>` : "";
+
+  return `<button class="back" data-a="continuer">${ic("gauche", "sm")}Revenir à la séance</button>
+    <div class="top"><div><h1>Récapitulatif</h1><p class="muted">${esc(S.titre)} · ${esc(nomSemaine(S.onglet).titre)}</p></div></div>
+    <div class="stats"><div><b class="tnum">${minutes} min</b><span>durée</span></div>
+      <div><b class="tnum">${c.faites}/${c.total}</b><span>séries</span></div>
+      <div><b class="tnum">${moy}</b><span>RPE moyen</span></div></div>
     ${rpeSeance}
-    <div class="navbas"><button class="vert" data-a="enregistrer">Enregistrer la séance</button></div>`;
+    <h2>Ce qui sera écrit dans ta feuille</h2>
+    <div class="liste recap">${lignes}</div>
+    <p class="xs subtle mt">RPE dans sa colonne, commentaire 📱 juste à droite. Tes notes manuelles sont gardées.</p>
+    <div class="pied"><button class="btn lg success" data-a="enregistrer">${ic("envoi")}Enregistrer la séance</button></div>`;
 }
 
 function vueReglages() {
   const c = etat.config;
-  const h = `
-    <p><button class="lien" data-a="retour">← Séances</button></p>
-    <h1>Réglages</h1>
-    <div class="carte pile">
-      <div><b>Lien</b><p class="doux petit">${c.demo ? "Démo" : esc(c.url) + "?cle=" + esc(c.cle.slice(0, 4)) + "…"}</p></div>
-      <button class="plein" data-a="changer-lien">${c.demo ? "Quitter la démo" : "Changer de lien"}</button>
-    </div>
-    <div class="carte pile">
-      <div><b>Vidéos sur le téléphone : ${etat.videos.size}</b><p class="doux petit" id="stockage"></p></div>
-      <button class="plein danger" data-a="vider-videos" ${etat.videos.size ? "" : "disabled"}>Supprimer les vidéos du téléphone</button>
-    </div>`;
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => {
       const el = document.getElementById("stockage");
-      if (el) el.textContent = "Espace utilisé par l'app : " + Math.round(e.usage / 1048576) + " Mo";
+      if (el) el.textContent = Math.round(e.usage / 1048576) + " Mo utilisés";
     });
   }
-  return h;
+  return `<button class="back" data-a="retour">${ic("gauche", "sm")}Semaines</button>
+    <div class="top"><h1>Réglages</h1></div>
+    <div class="liste">
+      <div class="item"><div class="grow"><p style="font-weight:500">Lien perso</p>
+        <p class="xs muted trunc">${c.demo ? "Démo" : esc(c.url.replace(/^https:\/\//, "")) + "?cle=" + esc(c.cle.slice(0, 4)) + "…"}</p></div>
+        <button class="btn sm outline" data-a="changer-lien">${c.demo ? "Quitter la démo" : "Changer"}</button></div>
+      <div class="item"><div class="grow"><p style="font-weight:500">Vidéos sur le téléphone : ${etat.videos.size}</p>
+        <p class="xs muted" id="stockage"></p></div>
+        <button class="btn sm danger" data-a="vider-videos" ${etat.videos.size ? "" : "disabled"}>Supprimer</button></div>
+    </div>`;
 }
 
 
@@ -729,10 +989,21 @@ async function changerConfig(config) {
   await kvSet("config", config);
   await kvDel("programme");
   await kvDel("demoEnvoi");
-  etat.vue = "accueil";
-  history.replaceState({ vue: "accueil" }, "");
-  rendre();
+  allerA("accueil");
   majProgramme(false);
+}
+
+/** Change une valeur de série. Un nouveau poids suit sur les séries suivantes pas encore faites. */
+function changerValeur(i, s, champ, valeur) {
+  const x = etat.seance.exos[i];
+  const ancien = x.sets[s][champ];
+  x.sets[s][champ] = valeur;
+  if (champ === "poids") {
+    for (let k = s + 1; k < x.sets.length; k++) {
+      if (!x.sets[k].fait && x.sets[k].poids === ancien) x.sets[k].poids = valeur;
+    }
+  }
+  sauver();
 }
 
 const actions = {
@@ -743,18 +1014,17 @@ const actions = {
   },
   "demo": () => changerConfig({ url: "", cle: "", demo: true }),
   "maj": () => majProgramme(false),
+  "semaine": (d) => { etat.semaine = Number(d.id); naviguer("semaine"); },
   "ouvrir": (d) => { etat.apercu = d.ref; naviguer("apercu"); },
-  "preparer": (d) => preparerHorsLigne(d.ref),
+  "preparer": (d) => {
+    const sem = semaines().find((s) => s.sheetId === Number(d.id));
+    if (sem) preparerHorsLigne("sem-" + sem.sheetId, sem.seances.map((s) => s.ref));
+  },
+  "preparer-seance": (d) => preparerHorsLigne(d.ref, [d.ref]),
   "retour": () => history.back(),
   "reglages": () => naviguer("reglages"),
   "commencer": (d) => commencer(d.ref),
   "reprendre": () => { activerSon(); naviguer("seance"); },
-  "abandonner": async () => {
-    if (!confirm("Abandonner la séance en cours ? Rien ne sera envoyé.")) return;
-    etat.seance = null;
-    await kvDel("encours");
-    rendre();
-  },
   "reessayer": async (d) => {
     const e = etat.envois.find((x) => x.id === d.id);
     if (!e) return;
@@ -774,9 +1044,7 @@ const actions = {
     await kvDel("encours");
     await kvDel("config");
     etat.config = null;
-    etat.vue = "config";
-    history.replaceState({ vue: "config" }, "");
-    rendre();
+    allerA("config");
   },
   "vider-videos": async () => {
     if (!confirm("Supprimer toutes les vidéos du téléphone ?")) return;
@@ -786,70 +1054,55 @@ const actions = {
   },
 
   // Séance
-  // Pas history.back() : si l'app a rouvert sur la séance, ce serait la fermer.
   "quitter": () => {
-    sortirSeance();
-    etat.vue = "accueil";
-    history.replaceState({ vue: "accueil" }, "");
-    rendre();
+    // Pas history.back() : si l'app a rouvert sur la séance, ce serait la fermer.
+    allerA(etat.semaine !== null ? "semaine" : "accueil");
+    toast("Séance gardée : reprends-la quand tu veux.");
   },
-  "coche": (d) => {
+  "valider": (d) => {
+    const se = etat.seance.exos[d.i].sets[d.s];
+    se.fait = !se.fait;
+    if (se.fait) apresSerie(d.s);
+    sauver(); rendre();
+  },
+  "pas": (d) => {
     const x = etat.seance.exos[d.i];
-    const se = x.faites[d.s];
-    etat.edition = null;
-    if (se.etat === "afaire") { se.etat = "ok"; apresSerie(d.s); }
-    else { Object.assign(se, { etat: "afaire", reps: "", charge: "" }); }
-    sauver(); rendre();
-  },
-  "editer": (d) => {
-    const ouvert = etat.edition && etat.edition.i === d.i && etat.edition.s === d.s;
-    etat.edition = ouvert ? null : { i: d.i, s: d.s };
+    const se = x.sets[d.s];
+    const base = se[d.champ] === null ? (d.champ === "poids" ? x.poidsPrevu : x.repsPrevues.n) || 0 : se[d.champ];
+    const pas = d.champ === "poids" ? (Math.max(base, x.poidsPrevu || 0) >= 20 ? 2.5 : 1) : 1;
+    changerValeur(d.i, d.s, d.champ, Math.max(0, Math.round((base + d.v * pas) * 100) / 100));
     rendre();
-    const champ = document.getElementById("ed-reps");
-    if (champ) champ.focus();
   },
-  "edit-ok": () => {
-    const { i, s } = etat.edition;
-    const x = etat.seance.exos[i];
-    const se = x.faites[s];
-    const avant = se.etat;
-    se.reps = document.getElementById("ed-reps").value.trim();
-    se.charge = document.getElementById("ed-charge").value.trim();
-    se.etat = se.reps || se.charge ? "modif" : "ok";
-    etat.edition = null;
-    if (avant === "afaire") apresSerie(s);
-    sauver(); rendre();
-  },
-  "edit-nonfaite": () => {
-    const { i, s } = etat.edition;
-    const se = etat.seance.exos[i].faites[s];
-    const avant = se.etat;
-    Object.assign(se, { etat: "nonfaite", reps: "", charge: "" });
-    etat.edition = null;
-    if (avant === "afaire") apresSerie(s);
-    sauver(); rendre();
-  },
-  "edit-annuler": () => { etat.edition = null; rendre(); },
   "serie-plus": (d) => {
-    etat.seance.exos[d.i].faites.push({ etat: "afaire", reps: "", charge: "" });
-    sauver(); rendre();
+    const x = etat.seance.exos[d.i];
+    const der = x.sets[x.sets.length - 1] || { poids: x.poidsPrevu, reps: x.repsPrevues && x.repsPrevues.n };
+    x.sets.push({ fait: false, poids: der.poids, reps: der.reps });
+    sauver(); fermerMenuOuRendre();
   },
+  "menu": (d) => { etat.menu = d.i; history.pushState({ vue: etat.vue, menu: true }, ""); rendre(); },
+  "menu-fermer": () => { if (etat.menu !== null) history.back(); },
+  "youtube": (d) => { window.open(etat.seance.exos[d.i].lien, "_blank", "noopener"); },
   "sauter": (d) => {
-    const raison = prompt("Pourquoi tu sautes cet exo ? (facultatif)", "");
+    const raison = prompt("Pourquoi tu sautes cet exercice ? (facultatif)", "");
     if (raison === null) return;
     Object.assign(etat.seance.exos[d.i], { saute: true, raison: raison.trim() });
-    sauver(); rendre();
+    sauver(); fermerMenuOuRendre();
   },
   "reprendre-exo": (d) => {
     Object.assign(etat.seance.exos[d.i], { saute: false, raison: "" });
-    sauver(); rendre();
+    sauver(); fermerMenuOuRendre();
   },
   "rpe": (d) => {
     const x = etat.seance.exos[d.i];
     x.rpe = x.rpe === d.v ? null : d.v;
     sauver(); rendre();
   },
-  "rpe-montrer": (d) => { etat.seance.exos[d.i].rpeVisible = true; rendre(); },
+  "comm": (d) => {
+    etat.commentaires[d.i] = true;
+    rendre();
+    const z = document.querySelector(`textarea[data-i="${d.i}"]`);
+    if (z) z.focus();
+  },
   "prec": () => changerEtape(-1),
   "suiv": () => changerEtape(1),
   "terminer": () => { finRepos(); naviguer("recap"); },
@@ -867,17 +1120,22 @@ const actions = {
     const R = etat.seance.repos;
     if (!R) return;
     R.fin = Math.max(R.fin, Date.now()) + 15000;
+    R.total = Math.max(R.total, Math.ceil((R.fin - Date.now()) / 1000));
     R.sonne = false;
-    $repos.classList.remove("fini");
     sauver();
   },
   "repos-fin": () => finRepos()
 };
 
+/** Après une action du menu : le retour d'historique le ferme (et redessine). */
+function fermerMenuOuRendre() {
+  if (etat.menu !== null) history.back();
+  else rendre();
+}
+
 function changerEtape(delta) {
   const S = etat.seance;
   S.etape = Math.min(Math.max(S.etape + delta, 0), S.etapes.length - 1);
-  etat.edition = null;
   sauver();
   rendre();
   window.scrollTo(0, 0);
@@ -894,12 +1152,21 @@ document.addEventListener("click", (ev) => {
   fn(d);
 });
 
-// Commentaire : enregistré à la frappe, sans redessiner (on garderait mal le curseur).
+// Saisie au clavier : commentaire enregistré à la frappe ; poids / reps à la
+// validation du champ (on ne redessine pas pendant la frappe).
 document.addEventListener("input", (ev) => {
   const el = ev.target;
   if (el.dataset.in === "comm" && etat.seance) {
     etat.seance.exos[Number(el.dataset.i)].commentaire = el.value;
     sauver();
+  }
+});
+document.addEventListener("change", (ev) => {
+  const el = ev.target;
+  if ((el.dataset.in === "poids" || el.dataset.in === "reps") && etat.seance) {
+    const v = num(el.value);
+    if (el.value.trim() !== "" && !isNaN(v) && v >= 0) changerValeur(Number(el.dataset.i), Number(el.dataset.s), el.dataset.in, v);
+    rendre();
   }
 });
 
