@@ -32,7 +32,8 @@ const etat = {
   vue: "accueil",
   semaine: null,       // sheetId de la semaine affichée
   apercu: null,        // ref de la séance affichée avant de commencer
-  menu: null,          // indice de l'exo dont le menu est ouvert
+  menu: null,          // menu ouvert : indice d'un exo, ou "seance"
+  historique: {},      // ref → résumé des séances faites avec l'app (sur ce téléphone)
   commentaires: {},    // exos dont la zone de commentaire est dépliée
   telechargements: {}, // clé → {fait, total, erreurs}
   videoEls: {},        // yt → <video>, gardées d'un rendu à l'autre
@@ -138,6 +139,7 @@ async function demarrer() {
   etat.config = await kvGet("config");
   etat.prog = await kvGet("programme");
   etat.seance = await kvGet("encours");
+  etat.historique = (await kvGet("historique")) || {};
   if (etat.seance && etat.seance.v !== VERSION_SEANCE) {
     etat.seance = null;                    // séance d'une version précédente de l'app
     await kvDel("encours");
@@ -490,10 +492,30 @@ function commentaireExo(x) {
   return parts.join(" · ");
 }
 
+/** Séries faites, en clair : « 4 × 4 reps @ 30 kg », ou série par série si elles diffèrent. */
+function resumeSets(x) {
+  if (x.saute) return "";
+  const txt = (se) => !se.fait ? "✗"
+    : [x.repsPrevues && se.reps !== null ? fmtReps(x, se.reps) : "", se.poids !== null ? fmtNum(se.poids) + " kg" : ""]
+        .filter(Boolean).join(" @ ") || "✓";
+  const l = x.sets.map(txt);
+  if (l.every((t) => t === "✗")) return "aucune série";
+  const parts = [];
+  for (let i = 0; i < l.length; i++) {
+    let j = i;
+    while (j + 1 < l.length && l[j + 1] === l[i]) j++;
+    parts.push(j > i ? (j - i + 1) + " × " + l[i] : l[i]);
+    i = j;
+  }
+  return parts.join(" · ");
+}
+
 function commencer(ref) {
   const t = trouverSeance(ref);
   if (!t) return;
-  if (etat.seance && !confirm("Une autre séance est en cours. L'abandonner ?")) return;
+  if (etat.seance && etat.seance.ref !== ref && !confirm("Une autre séance est en cours. L'abandonner ?")) return;
+  if ((seanceFaite(t.seance) || etat.historique[ref]) &&
+      !confirm("Cette séance est déjà faite. La refaire ? Les nouveaux RPE remplaceront les anciens dans ta feuille.")) return;
   etat.seance = nouvelleSeance(t.seance, t.semaine.onglet);
   etat.commentaires = {};
   sauver();
@@ -540,6 +562,16 @@ async function enregistrerSeance() {
     });
     await kvSet("programme", etat.prog);
   }
+
+  // Le détail des séries ne va pas dans la feuille : on le garde ici pour le revoir.
+  etat.historique[S.ref] = {
+    date: Date.now(), duree: envoi.duree, rpePied: envoi.rpePied,
+    exos: S.exos.map((x, k) => ({
+      nom: x.nom, saute: x.saute, raison: x.raison, rpe: x.rpe, resume: resumeSets(x),
+      commentaire: envoi.exos[k].commentaire
+    }))
+  };
+  await kvSet("historique", etat.historique);
 
   await kvDel("encours");
   sortirSeance();
@@ -806,6 +838,8 @@ function vueApercu() {
   const etapes = etapesDe(s.exos);
   const encours = etat.seance && etat.seance.ref === s.ref;
   const tel = etat.telechargements[s.ref];
+  const histo = etat.historique[s.ref];
+  const faite = seanceFaite(s) || !!histo;
 
   let liste = "";
   let n = 0;
@@ -819,22 +853,35 @@ function vueApercu() {
       n++;
       const detail = [x.nbSeries + " × " + (x.reps || "—"), x.charge, e.length === 1 && x.recup && x.recup !== "-" ? "récup " + x.recup : ""]
         .filter(Boolean).join(" · ");
+      // Séance faite : ce qui a été fait (détail gardé sur le téléphone, sinon la feuille).
+      const h = histo && histo.exos.find((y) => nomCle(y.nom) === nomCle(x.nom));
+      const fait = h ? (h.saute ? "Sauté" + (h.raison ? " — " + h.raison : "") : h.resume) : "";
+      const comm = h ? h.commentaire : x.commentaire;
+      const rpe = h ? (h.rpe || "") : x.rpe;
       liste += `<div class="item"><span class="num">${n}</span>
-        <div class="grow"><p class="trunc" style="font-weight:500">${esc(x.nom)}</p><p class="xs muted">${esc(detail)}</p></div>
+        <div class="grow"><p class="trunc" style="font-weight:500">${esc(x.nom)}</p><p class="xs muted">${esc(detail)}</p>
+          ${fait ? `<p class="xs ${fait === "aucune série" ? "subtle" : ""}" style="margin-top:2px">${ic(fait === "aucune série" || (h && h.saute) ? "x" : "check", "sm")} ${esc(fait)}</p>` : ""}
+          ${faite && comm ? `<p class="xs subtle" style="margin-top:2px">${esc(comm.indexOf("📱") === -1 && h ? "📱 " + comm : comm)}</p>` : ""}</div>
         ${x.lien && !(x.yt && etat.videos.has(x.yt)) ? `<span class="subtle" title="Vidéo pas sur le téléphone">${ic("sansvideo", "sm")}</span>` : ""}
-        ${rpeRempli(x.rpe) ? `<span class="badge">RPE ${esc(x.rpe)}</span>` : ""}</div>`;
+        ${rpeRempli(rpe) ? `<span class="badge">RPE ${esc(rpe)}</span>` : ""}</div>`;
     });
   });
 
   return `<button class="back" data-a="retour">${ic("gauche", "sm")}${esc(nomSemaine(t.semaine.onglet).titre)}</button>
-    <div class="top"><div><h1>${esc(s.titre)}</h1><p class="muted">${s.type === "course" ? "Course" : "Salle"}</p></div>
-      ${seanceFaite(s) ? `<span class="badge ok">${ic("check", "sm")}Faite</span>` : ""}</div>
+    <div class="top"><div><h1>${esc(s.titre)}</h1><p class="muted">${s.type === "course" ? "Course" : "Salle"}${histo
+        ? " · faite le " + new Date(histo.date).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }) + (histo.duree ? " · " + histo.duree + " min" : "")
+        : ""}</p></div>
+      ${encours ? '<span class="badge accent">En cours</span>' : faite ? `<span class="badge ok">${ic("check", "sm")}Faite</span>` : ""}</div>
     <div class="stats"><div><b>${s.exos.length}</b><span>exercices</span></div><div><b>${series}</b><span>séries</span></div>
       <div><b class="tnum">${v.ici}/${v.total}</b><span>vidéos</span></div></div>
     ${v.ici < v.total || tel ? `<button class="btn outline block" style="margin-bottom:14px" data-a="preparer-seance" data-ref="${esc(s.ref)}" ${etat.enLigne && !tel ? "" : "disabled"}>
       ${ic("telecharger")}${tel ? `Téléchargement ${tel.fait}/${tel.total}…` : "Télécharger les vidéos"}</button>` : ""}
+    ${faite && !encours ? `<h2 class="row">${ic("historique", "sm")}Ce que tu as fait</h2>` : ""}
     <div class="liste">${liste}</div>
-    <div class="pied"><button class="btn lg" data-a="${encours ? "reprendre" : "commencer"}" data-ref="${esc(s.ref)}">${encours ? "Reprendre la séance" : "Commencer la séance"}</button></div>`;
+    <div class="pied">${encours
+      ? `<button class="btn lg" data-a="reprendre">Reprendre la séance</button>`
+      : faite ? `<button class="btn lg outline" data-a="commencer" data-ref="${esc(s.ref)}">${ic("rafraichir")}Refaire la séance</button>`
+      : `<button class="btn lg" data-a="commencer" data-ref="${esc(s.ref)}">Commencer la séance</button>`}</div>`;
 }
 
 function vueSeance() {
@@ -848,7 +895,7 @@ function vueSeance() {
   return `
     <div class="barre-seance">
       <div class="row between">
-        <button class="btn icon" data-a="quitter" aria-label="Quitter">${ic("x")}</button>
+        <button class="btn icon" data-a="menu-seance" aria-label="Quitter">${ic("x")}</button>
         <div class="titre"><b>${esc(S.titre)}</b><span class="sm muted tnum"><span id="chrono">${mmss(Math.floor((Date.now() - S.debut) / 1000))}</span> · ${c.faites}/${c.total} séries</span></div>
         <button class="btn icon" data-a="terminer" aria-label="Terminer">${ic("check")}</button>
       </div>
@@ -934,6 +981,14 @@ function stepper(i, s, champ, valeur, modif) {
 }
 
 function vueMenu() {
+  if (etat.menu === "seance") {
+    return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
+      <div class="poignee"></div><div class="titre">${esc(etat.seance.titre)}</div>
+      <button data-a="quitter">${ic("gauche")}<span>Quitter<br><span class="xs muted">La séance reste en cours, tu la reprends quand tu veux</span></span></button>
+      <button data-a="terminer">${ic("check")}Terminer et voir le récapitulatif</button>
+      <button class="danger" data-a="abandonner">${ic("x")}<span>Abandonner la séance<br><span class="xs muted">Rien n'est envoyé à ta feuille</span></span></button>
+      <button data-a="menu-fermer">Annuler</button></div></div>`;
+  }
   const x = etat.seance && etat.seance.exos[etat.menu];
   if (!x) return "";
   return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
@@ -1140,10 +1195,20 @@ const actions = {
   },
 
   // Séance
+  "menu-seance": () => { etat.menu = "seance"; history.pushState({ vue: etat.vue, menu: true }, ""); rendre(); },
   "quitter": () => {
-    // Pas history.back() : si l'app a rouvert sur la séance, ce serait la fermer.
+    // Pas history.back() pour sortir : si l'app a rouvert sur la séance, ce serait la fermer.
+    etat.menu = null;
     allerA(etat.semaine !== null ? "semaine" : "accueil");
     toast("Séance gardée : reprends-la quand tu veux.");
+  },
+  "abandonner": async () => {
+    if (!confirm("Abandonner la séance ? Ce que tu as saisi sera perdu, rien n'est envoyé.")) return;
+    etat.menu = null;
+    await kvDel("encours");
+    allerA(etat.semaine !== null ? "semaine" : "accueil");
+    etat.seance = null;
+    rendre();
   },
   "valider": (d) => {
     const se = etat.seance.exos[d.i].sets[d.s];
@@ -1191,7 +1256,11 @@ const actions = {
   },
   "prec": () => changerEtape(-1),
   "suiv": () => changerEtape(1),
-  "terminer": () => { finRepos(); naviguer("recap"); },
+  "terminer": () => {
+    finRepos();
+    if (etat.menu !== null) { etat.menu = null; history.replaceState({ vue: "seance" }, ""); }
+    naviguer("recap");
+  },
   "continuer": () => history.back(),
   "aller": (d) => { etat.seance.etape = d.v; sauver(); history.back(); },
   "rpe-pied": (d) => {

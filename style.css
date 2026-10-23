@@ -245,6 +245,7 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 .feuille button { display: flex; width: 100%; align-items: center; gap: 12px; padding: 14px 12px; border: 0; border-radius: 10px; background: none; color: var(--fg); font: inherit; cursor: pointer; text-align: left; }
 .feuille button:active { background: var(--muted); }
 .feuille button.danger { color: var(--danger); }
+.feuille button .xs { font-weight: 400; }
 
 #toast {
   position: fixed; left: 16px; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 30;
