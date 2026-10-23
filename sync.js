@@ -1,5 +1,8 @@
 /*
- * Envoi de la file des séances vers la page web du Pilotage.
+ * Envoi de la file vers la page web du Pilotage : séances faites dans l'app
+ * (action « enregistrer », champ envoi) et, depuis le suivi de charge, séances
+ * déclarées (« declarer ») ou programmées modifiées (« programmee ») : champs
+ * action + donnees.
  * Appelé par la page (ouverture, retour du réseau, fin de séance) ET par le
  * service worker (Background Sync : Android envoie même l'app fermée).
  *
@@ -26,8 +29,8 @@ async function envoyerFile_() {
     if (e.refuse) continue;
 
     if (config.demo) {
-      // Démo : rien ne part, on garde l'envoi pour l'afficher.
-      await kvSet("demoEnvoi", e.envoi);
+      // Démo : rien ne part, on garde l'envoi de séance pour l'afficher.
+      if (!e.action) await kvSet("demoEnvoi", e.envoi);
       await envoiSupprimer(e.id);
       bilan.envoyes++;
       continue;
@@ -35,7 +38,10 @@ async function envoyerFile_() {
 
     let rep;
     try {
-      rep = await posterJSON(config.url, { action: "enregistrer", cle: config.cle, envoi: e.envoi });
+      const corps = e.action
+        ? Object.assign({ action: e.action, cle: config.cle }, e.donnees)
+        : { action: "enregistrer", cle: config.cle, envoi: e.envoi };
+      rep = await posterJSON(config.url, corps);
     } catch (err) {
       e.essais = (e.essais || 0) + 1;
       e.erreur = "Pas de réseau (" + err.message + ")";
@@ -45,6 +51,7 @@ async function envoyerFile_() {
     if (rep && rep.ok) {
       await envoiSupprimer(e.id);
       bilan.envoyes++;
+      if (e.action) bilan.charge = true;    // la charge affichée est à relire
       if (rep.rapport) bilan.rapports.push({ resume: e.resume, rapport: rep.rapport });
     } else {
       e.refuse = true;

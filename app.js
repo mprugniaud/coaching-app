@@ -40,6 +40,9 @@ const etat = {
   commentaires: {},    // exos dont la zone de commentaire est dépliée
   telechargements: {}, // clé → {fait, total, erreurs}
   majA: 0,             // dernière mise à jour réussie du programme (ms)
+  charge: null,        // réponse de ?api=charge (suivi de fatigue), gardée hors ligne
+  form: null,          // séance en cours de déclaration
+  progEdit: null,      // séance programmée en cours de modification
   videoEls: {},        // yt → <video>, gardées d'un rendu à l'autre
   enLigne: navigator.onLine
 };
@@ -68,7 +71,9 @@ const ICONES = {
   calendrier: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
   sansvideo: '<path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/>',
   historique: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
-  envoi: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>'
+  envoi: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  charge: '<line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/>',
+  crayon: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'
 };
 /** Logo FLX (même dessin que app/icon.svg), en ligne pour marcher hors réseau. */
 const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" fill="#ff6b1a"/>' +
@@ -85,6 +90,16 @@ const ic = (nom, cls) => `<svg class="i ${cls || ""}" viewBox="0 0 24 24" aria-h
 
 const esc = (v) => String(v === null || v === undefined ? "" : v)
   .replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/** Date locale au format AAAA-MM-JJ (celui qu'attend le serveur). */
+const isoLocal = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+/** « 2026-10-23 » → « ven. 23/10 ». */
+const jourCourt = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if (!m) return iso || "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString("fr-FR", { weekday: "short" }) + " " + m[3] + "/" + m[2];
+};
 
 const mmss = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 const num = (t) => Number(String(t).replace(",", "."));
@@ -167,6 +182,7 @@ async function demarrer() {
   etat.prog = await kvGet("programme");
   etat.seance = await kvGet("encours");
   etat.historique = (await kvGet("historique")) || {};
+  etat.charge = (await kvGet("charge")) || null;
   if (etat.seance && etat.seance.v !== VERSION_SEANCE) {
     etat.seance = null;                    // séance d'une version précédente de l'app
     await kvDel("encours");
@@ -180,7 +196,10 @@ async function demarrer() {
 
   if (etat.config) {
     synchroniser();
-    if (navigator.onLine) majProgramme(true).then(preparerSemaineEnCours);
+    if (navigator.onLine) {
+      majProgramme(true).then(preparerSemaineEnCours);
+      majCharge(true);
+    }
   }
   setInterval(tic, 1000);
 }
@@ -249,7 +268,8 @@ async function synchroniser() {
           " dans ta feuille" + (ignores.length ? " — non retrouvés : " + ignores.join(", ") : ""), 5000);
   }
   if (etat.envois.some((e) => !e.refuse)) syncArrierePlan();
-  if (["accueil", "semaine"].includes(etat.vue)) rendre(); else rendreStatut();
+  if (bilan && bilan.envoyes) majCharge(true);
+  if (["accueil", "semaine", "charge"].includes(etat.vue)) rendre(); else rendreStatut();
 }
 
 /** Laisse Android envoyer la file plus tard, même l'app fermée. */
@@ -337,6 +357,31 @@ function rendreDiscret() {
   const a = document.activeElement;
   if (etat.vue === "seance" && a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) return;
   rendre();
+}
+
+/** Suivi de charge (même lien perso). Gardé sur le téléphone pour l'afficher hors réseau. */
+async function majCharge(silencieux) {
+  const c = etat.config;
+  if (!c) return false;
+  try {
+    let rep;
+    if (c.demo) {
+      rep = JSON.parse(JSON.stringify(CHARGE_DEMO));
+    } else {
+      const r = await fetch(c.url + "?api=charge&cle=" + encodeURIComponent(c.cle));
+      rep = await r.json();
+    }
+    if (!rep.ok) throw new Error(rep.erreur || "réponse inattendue");
+    rep.maj = new Date().toISOString();
+    etat.charge = rep;
+    await kvSet("charge", rep);
+    if (!silencieux) toast("Charge à jour");
+  } catch (err) {
+    if (!silencieux) toast("Mise à jour impossible : " + err.message, 5000);
+    return false;
+  }
+  if (["charge", "accueil"].includes(etat.vue)) rendre();
+  return true;
 }
 
 /**
@@ -445,7 +490,7 @@ function seanceFaite(s) {
 }
 
 function enAttente(ref) {
-  return etat.envois.some((e) => e.envoi.ref === ref && !e.refuse);
+  return etat.envois.some((e) => e.envoi && e.envoi.ref === ref && !e.refuse);
 }
 
 function videosDe(seances) {
@@ -618,6 +663,7 @@ async function enregistrerSeance() {
   const envoi = {
     id: uuid(), ref: S.ref, titre: S.titre, onglet: S.onglet,
     duree: Math.round((Date.now() - S.debut) / 60000),
+    date: isoLocal(new Date(S.debut)),
     rpePied: S.type === "course" && S.rpePied ? S.rpePied : "",
     exos: S.exos.map((x) => ({
       ligne: x.ligne, nom: x.nom,
@@ -753,6 +799,7 @@ async function garderEcran(actif) {
 
 function rendre() {
   const vues = { config: vueConfig, accueil: vueAccueil, semaine: vueSemaine, apercu: vueApercu,
+                 charge: vueCharge, declarer: vueDeclarer, programmee: vueProgrammee,
                  seance: vueSeance, recap: vueRecap, reglages: vueReglages };
   // « FLX TRAINING » en haut de chaque écran ; la séance l'a dans sa barre fixe,
   // l'écran de bienvenue a le grand logo.
@@ -849,7 +896,7 @@ function vueAccueil() {
     h += '<div id="demo-envoi"></div>';
     kvGet("demoEnvoi").then(afficherEnvoiDemo);
   }
-  return h;
+  return h + onglets("seances");
 }
 
 function afficherEnvoiDemo(envoi) {
@@ -1179,6 +1226,167 @@ function vueReglages() {
 }
 
 
+/* ============================ SUIVI DE CHARGE ============================ */
+
+/** Barre du bas Séances / Charge. Masquée si le suivi de charge n'est pas installé. */
+function onglets(actif) {
+  if (etat.charge && etat.charge.equipe === false) return "";
+  const b = (id, icone, libelle) => `<button class="${actif === id ? "on" : ""}" data-a="onglet-${id}">${ic(icone)}<span>${libelle}</span></button>`;
+  return `<nav class="onglets">${b("seances", "haltere", "Séances")}${b("charge", "charge", "Charge")}</nav>`;
+}
+
+/** Zones ACWR : couleur et phrase, mêmes seuils que l'onglet « Charge » de Félix. */
+const ZONES = {
+  "Zone optimale": ["zone-ok", "Ta charge est dans la bonne zone par rapport à tes 4 semaines précédentes."],
+  "Sous-charge": ["zone-bas", "Moins que d'habitude : parfait pour récupérer, à surveiller si ça dure."],
+  "Vigilance": ["zone-vigilance", "Hausse marquée par rapport à d'habitude : écoute ta fatigue."],
+  "Pic de charge": ["zone-pic", "Forte hausse d'un coup : risque de blessure, parles-en à Félix."],
+  "Historique insuffisant": ["zone-neutre", "Il faut au moins 2 semaines d'historique pour comparer."],
+  "Aucune séance (réf.)": ["zone-neutre", "Aucune séance la semaine dernière : rien à comparer."]
+};
+
+const envoisCharge = (action) => etat.envois.filter((e) => e.action === action && !e.refuse);
+
+function vueCharge() {
+  const C = etat.charge;
+  let h = `<div class="top"><div><p class="muted sm">Suivi de fatigue</p><h1>Ta charge</h1></div>${statut()}</div>`;
+  if (!C) {
+    return h + `<div class="card vide-etat stack"><p>Ta charge n'est pas encore sur le téléphone.</p>
+      <button class="btn" data-a="maj-charge" ${etat.enLigne ? "" : "disabled"}>${ic("rafraichir")}Télécharger</button></div>` + onglets("charge");
+  }
+  if (!C.equipe) {
+    return h + `<div class="card stack"><h3>Pas encore activé</h3>
+      <p class="muted sm">Le suivi de charge n'est pas installé dans ta feuille. Demande à Félix de l'activer.</p></div>`;
+  }
+
+  const sem = C.semaines;
+  const a = C.analyse;
+  const zone = ZONES[a.alerte] || ["zone-neutre", ""];
+  const acwr = a.acwr === null ? "—" : fmtNum(a.acwr);
+  h += `<div class="stats">
+      <div><b class="tnum">${sem[0].charge || 0}</b><span>cette semaine · ${sem[0].nbSeances} séance${sem[0].nbSeances > 1 ? "s" : ""}</span></div>
+      <div><b class="tnum">${sem[1] && sem[1].charge !== null ? sem[1].charge : "—"}</b><span>semaine dernière</span></div>
+      <div><b class="tnum txt-${zone[0]}">${acwr}</b><span>ACWR</span></div></div>
+    <div class="card stack"><div class="row between"><h3>${esc(a.alerte)}</h3><span class="badge ${zone[0]}"><span class="dot"></span>${acwr === "—" ? "—" : "ACWR " + acwr}</span></div>
+      <p class="sm muted">${esc(zone[1])}</p>
+      ${graphiqueCharge(sem, a.chronique)}
+      <p class="xs subtle">Charge = durée (min) × RPE. ACWR = semaine dernière ÷ moyenne des 4 semaines d'avant.</p></div>
+    <button class="btn block lg mt" data-a="declarer">${ic("plus")}Déclarer une séance</button>`;
+
+  // Séances programmées de la semaine (durée et date modifiables)
+  const enCours = envoisCharge("programmee").map((e) => e.donnees.ref);
+  const prog = C.page.programmees || [];
+  if (prog.length) {
+    h += `<h2>Séances programmées cette semaine</h2><div class="liste">` + prog.map((p) => {
+      const ch = p.rpe ? Math.round(p.duree * p.rpe) : null;
+      return `<div class="item"><div class="grow"><p style="font-weight:500">${esc(p.titre)}</p>
+        <p class="xs muted">${esc(jourCourt(p.date))} · ${esc(p.duree)} min${ch ? " · charge " + ch : " · pas encore faite"}</p></div>
+        ${enCours.includes(p.ref) ? '<span class="badge accent">À envoyer</span>' : ""}
+        ${p.rpe ? `<span class="badge ${classeRPE(Number(p.rpe))}">RPE ${esc(fmtNum(Number(p.rpe)))}</span>` : ""}
+        <button class="btn icon plain" data-a="prog-editer" data-ref="${esc(p.ref)}" aria-label="Modifier">${ic("crayon", "sm")}</button></div>`;
+    }).join("") + `</div>`;
+  }
+
+  // Séances déclarées : celles en attente d'envoi d'abord
+  const attente = envoisCharge("declarer").map((e) => Object.assign({ attente: true }, e.donnees.seance));
+  const dernieres = attente.map((x) => ({ date: jourCourt(x.date), type: x.type, duree: x.duree, rpe: x.rpe,
+                                          charge: x.duree * x.rpe, commentaire: x.commentaire, attente: true }))
+    .concat(C.page.dernieres || []);
+  if (dernieres.length) {
+    h += `<h2>Déclarées récemment</h2><div class="liste">` + dernieres.map((d) => `
+      <div class="item"><div class="grow"><p style="font-weight:500">${esc(d.type)} <span class="muted xs">· ${esc(d.date)}</span></p>
+        <p class="xs muted">${esc(d.duree)} min · charge ${esc(d.charge)}${d.commentaire ? " · " + esc(d.commentaire) : ""}</p></div>
+        ${d.attente ? '<span class="badge accent">À envoyer</span>' : ""}
+        <span class="badge ${classeRPE(Number(d.rpe))}">RPE ${esc(d.rpe)}</span></div>`).join("") + `</div>`;
+  }
+
+  const d = new Date(C.maj);
+  h += `<div class="row between mt"><span class="xs subtle">Mis à jour le ${d.toLocaleDateString("fr-FR")} à
+      ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+    <button class="btn sm outline" data-a="maj-charge" ${etat.enLigne ? "" : "disabled"}>${ic("rafraichir", "sm")}Actualiser</button></div>`;
+  return h + onglets("charge");
+}
+
+/**
+ * Charge des dernières semaines en barres (la plus ancienne à gauche). La
+ * semaine en cours est en pointillés (pas finie) ; la ligne = moyenne des
+ * 4 semaines qui servent de référence (charge chronique).
+ */
+function graphiqueCharge(semaines, chronique) {
+  const liste = semaines.slice().reverse();
+  const n = liste.length;
+  const L = 340, H = 150, bas = 124, haut = 18, pas = L / n, larg = Math.min(34, pas * 0.56);
+  const max = Math.max(1, chronique || 0, ...liste.map((w) => w.charge || 0)) * 1.08;
+  const y = (v) => bas - (bas - haut) * v / max;
+  let barres = "";
+  liste.forEach((w, i) => {
+    const x = i * pas + (pas - larg) / 2;
+    const v = w.charge || 0;
+    const encours = i === n - 1;
+    const cls = encours ? "barre encours" : i === n - 2 ? "barre ref" : "barre";
+    const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(w.lundi || "");
+    barres += `<rect class="${cls}" x="${x}" y="${y(v)}" width="${larg}" height="${Math.max(bas - y(v), v ? 2 : 0)}" rx="5"/>
+      <text class="val" x="${x + larg / 2}" y="${y(v) - 5}" text-anchor="middle">${v || ""}</text>
+      <text class="lib" x="${x + larg / 2}" y="${H - 6}" text-anchor="middle">${encours ? "en cours" : m ? m[2] + "/" + m[1] : ""}</text>`;
+  });
+  const ligne = chronique ? `<line class="chronique" x1="0" x2="${L}" y1="${y(chronique)}" y2="${y(chronique)}"/>
+    <text class="lib" x="${L - 2}" y="${y(chronique) - 4}" text-anchor="end">moy. ${Math.round(chronique)}</text>` : "";
+  return `<svg class="graphique" viewBox="0 0 ${L} ${H}" role="img" aria-label="Charge des ${n} dernières semaines">${ligne}${barres}</svg>`;
+}
+
+function vueDeclarer() {
+  const C = etat.charge;
+  const f = etat.form;
+  if (!C || !f) return vueCharge();
+  const types = (C.page && C.page.types) || ["Entraînement", "Match", "Course", "Mobilité / renfo", "Autre"];
+  const min = new Date(); min.setDate(min.getDate() - 60);
+  return `<button class="back" data-a="retour">${ic("gauche", "sm")}Charge</button>
+    <div class="top"><div><h1>Déclarer une séance</h1><p class="muted">Hand, match, course… tout ce qui n'est pas dans l'app.</p></div></div>
+    <div class="card stack">
+      <div><p class="sm" style="font-weight:600;margin-bottom:8px">Type</p>
+        <div class="row wrap">${types.map((t) => `<button class="chip ${f.type === t ? "on" : ""}" data-a="form-type" data-t="${esc(t)}">${esc(t)}</button>`).join("")}</div></div>
+      <div><p class="sm" style="font-weight:600;margin-bottom:8px">Date</p>
+        <input class="champ" type="date" data-in="form-date" value="${esc(f.date)}" min="${isoLocal(min)}" max="${isoLocal(new Date())}"></div>
+      <div><p class="sm" style="font-weight:600;margin-bottom:8px">Durée (min)</p>
+        <div class="stepper" style="max-width:220px"><button data-a="form-duree" data-v="-5" aria-label="Moins">${ic("moins", "sm")}</button>
+          <input inputmode="numeric" data-in="form-duree" value="${f.duree}">
+          <button data-a="form-duree" data-v="5" aria-label="Plus">${ic("plus", "sm")}</button></div></div>
+      <div><div class="row between"><p class="sm" style="font-weight:600">RPE de la séance</p><span class="xs subtle">1 facile · 10 max</span></div>
+        <div class="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) => `<button class="${f.rpe === v ? "on" : ""}" data-a="form-rpe" data-v="${v}">${v}</button>`).join("")}</div></div>
+      <div><p class="sm" style="font-weight:600;margin-bottom:8px">Commentaire (facultatif)</p>
+        <textarea data-in="form-comm" placeholder="Match amical, terrain gras…">${esc(f.commentaire)}</textarea></div>
+      ${f.rpe ? `<p class="sm muted">Charge : ${f.duree} min × ${f.rpe} = <b>${f.duree * f.rpe}</b></p>` : ""}
+    </div>
+    <div class="pied"><button class="btn lg" data-a="declarer-ok">${ic("check")}Enregistrer</button></div>`;
+}
+
+function vueProgrammee() {
+  const e = etat.progEdit;
+  if (!e) return vueCharge();
+  const min = new Date(); min.setDate(min.getDate() - 60);
+  return `<button class="back" data-a="retour">${ic("gauche", "sm")}Charge</button>
+    <div class="top"><div><h1>${esc(e.titre)}</h1><p class="muted">Corrige le jour ou la durée réelle de la séance.</p></div></div>
+    <div class="card stack">
+      <div><p class="sm" style="font-weight:600;margin-bottom:8px">Date</p>
+        <input class="champ" type="date" data-in="prog-date" value="${esc(e.date)}" min="${isoLocal(min)}" max="${isoLocal(new Date())}"></div>
+      <div><p class="sm" style="font-weight:600;margin-bottom:8px">Durée (min)</p>
+        <div class="stepper" style="max-width:220px"><button data-a="prog-duree" data-v="-5" aria-label="Moins">${ic("moins", "sm")}</button>
+          <input inputmode="numeric" data-in="prog-duree" value="${e.duree}">
+          <button data-a="prog-duree" data-v="5" aria-label="Plus">${ic("plus", "sm")}</button></div></div>
+    </div>
+    <div class="pied"><button class="btn lg" data-a="prog-ok">${ic("check")}Enregistrer</button></div>`;
+}
+
+/** Met une écriture du suivi de charge dans la file d'envoi (part dès qu'il y a du réseau). */
+async function envoyerCharge(action, donnees, resume) {
+  const id = uuid();
+  await envoiMettre({ id: id, action: action, donnees: Object.assign({ id: id }, donnees), resume: resume, cree: Date.now(), essais: 0 });
+  await rafraichirLocaux();
+  synchroniser();
+  syncArrierePlan();
+}
+
+
 /* =============================== ACTIONS ================================= */
 
 function lireLien(texte) {
@@ -1236,6 +1444,46 @@ const actions = {
   "preparer-seance": (d) => preparerHorsLigne(d.ref, [d.ref]),
   "retour": () => history.back(),
   "reglages": () => naviguer("reglages"),
+  // Suivi de charge
+  "onglet-seances": () => allerA("accueil"),
+  "onglet-charge": () => { naviguer("charge"); if (etat.enLigne && !etat.charge) majCharge(false); },
+  "maj-charge": () => majCharge(false),
+  "declarer": () => {
+    etat.form = { type: "", date: isoLocal(new Date()), duree: (etat.charge && etat.charge.page.dureeDefaut) || 60, rpe: null, commentaire: "" };
+    naviguer("declarer");
+  },
+  "form-type": (d) => { etat.form.type = d.t; rendre(); },
+  "form-rpe": (d) => { etat.form.rpe = etat.form.rpe === d.v ? null : d.v; rendre(); },
+  "form-duree": (d) => { etat.form.duree = Math.min(300, Math.max(5, etat.form.duree + d.v)); rendre(); },
+  "declarer-ok": async () => {
+    const f = etat.form;
+    if (!f.type) { toast("Choisis un type de séance."); return; }
+    if (!f.rpe) { toast("Choisis un RPE."); return; }
+    if (!(f.duree >= 1 && f.duree <= 300)) { toast("Durée entre 1 et 300 min."); return; }
+    const seance = { date: f.date, type: f.type, duree: f.duree, rpe: f.rpe, commentaire: f.commentaire.trim() };
+    etat.form = null;
+    history.back();
+    await envoyerCharge("declarer", { seance: seance }, seance.type + " · " + jourCourt(seance.date));
+    toast(etat.enLigne ? "Séance déclarée." : "Séance déclarée. Envoi dès que le réseau revient.");
+  },
+  "prog-editer": (d) => {
+    const p = (etat.charge.page.programmees || []).find((x) => x.ref === d.ref);
+    if (!p) return;
+    etat.progEdit = { ref: p.ref, titre: p.titre, date: p.date, duree: Number(p.duree) || 60 };
+    naviguer("programmee");
+  },
+  "prog-duree": (d) => { etat.progEdit.duree = Math.min(300, Math.max(5, etat.progEdit.duree + d.v)); rendre(); },
+  "prog-ok": async () => {
+    const e = etat.progEdit;
+    if (!(e.duree >= 1 && e.duree <= 300)) { toast("Durée entre 1 et 300 min."); return; }
+    // Affiché tout de suite, avant l'envoi.
+    const p = (etat.charge.page.programmees || []).find((x) => x.ref === e.ref);
+    if (p) { p.date = e.date; p.duree = e.duree; await kvSet("charge", etat.charge); }
+    etat.progEdit = null;
+    history.back();
+    await envoyerCharge("programmee", { ref: e.ref, modif: { date: e.date, duree: e.duree } }, e.titre + " · " + jourCourt(e.date));
+    toast("Séance modifiée.");
+  },
   "theme": (d) => { appliquerTheme(d.theme); rendre(); },
   "commencer": (d) => commencer(d.ref),
   "reprendre": () => {
@@ -1398,6 +1646,7 @@ document.addEventListener("click", (ev) => {
 // validation du champ (on ne redessine pas pendant la frappe).
 document.addEventListener("input", (ev) => {
   const el = ev.target;
+  if (el.dataset.in === "form-comm" && etat.form) { etat.form.commentaire = el.value; return; }
   if (el.dataset.in === "comm" && etat.seance) {
     etat.seance.exos[Number(el.dataset.i)].commentaire = el.value;
     sauver();
@@ -1405,6 +1654,15 @@ document.addEventListener("input", (ev) => {
 });
 document.addEventListener("change", (ev) => {
   const el = ev.target;
+  if (el.dataset.in === "form-date" && etat.form) { etat.form.date = el.value; return; }
+  if (el.dataset.in === "prog-date" && etat.progEdit) { etat.progEdit.date = el.value; return; }
+  if ((el.dataset.in === "form-duree" || el.dataset.in === "prog-duree")) {
+    const cible = el.dataset.in === "form-duree" ? etat.form : etat.progEdit;
+    const v = Math.round(num(el.value));
+    if (cible && v >= 1 && v <= 300) cible.duree = v;
+    rendre();
+    return;
+  }
   if ((el.dataset.in === "poids" || el.dataset.in === "reps") && etat.seance) {
     const v = num(el.value);
     if (el.value.trim() !== "" && !isNaN(v) && v >= 0) changerValeur(Number(el.dataset.i), Number(el.dataset.s), el.dataset.in, v);

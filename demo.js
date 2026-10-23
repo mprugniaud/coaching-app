@@ -58,3 +58,31 @@ const PROGRAMME_DEMO = {
     }]
   }
 };
+
+/* Suivi de charge de démonstration : même forme que « …/exec?api=charge ». */
+const CHARGE_DEMO = (function () {
+  const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const lundi = new Date(); lundi.setDate(lundi.getDate() - ((lundi.getDay() + 6) % 7));
+  const charges = [420, 1210, 980, 1040, null, 860];
+  return {
+    ok: true, equipe: true,
+    semaines: charges.map((c, i) => {
+      const d = new Date(lundi); d.setDate(d.getDate() - 7 * i);
+      return { lundi: iso(d), charge: c, nbSeances: c ? Math.round(c / 330) : 0 };
+    }),
+    analyse: { ref: 1210, chronique: 960, acwr: 1.26, alerte: "Zone optimale" },
+    seuils: { bas: 0.8, haut: 1.3, danger: 1.5 },
+    page: {
+      types: ["Entraînement", "Match", "Course", "Mobilité / renfo", "Autre"],
+      dureeDefaut: 60, dureeMax: 300,
+      programmees: [
+        { ref: "bloc-4-2-3", titre: "Muscu Séance 1", type: "Muscu", date: iso(lundi), duree: 72, rpe: 6.4 },
+        { ref: "bloc-4-2-12", titre: "Course Séance 2", type: "Course (programme)", date: iso(lundi), duree: 60, rpe: "" }
+      ],
+      dernieres: [
+        { date: "22/10", type: "Match", duree: 70, rpe: 8, charge: 560, commentaire: "Victoire 31-27" },
+        { date: "20/10", type: "Entraînement", duree: 90, rpe: 6, charge: 540, commentaire: "" }
+      ]
+    }
+  };
+})();

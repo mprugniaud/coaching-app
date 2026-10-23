@@ -275,3 +275,41 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 }
 .recap .comm { font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
 .vide-etat { text-align: center; padding: 32px 16px; color: var(--fg-muted); }
+
+/* --- Barre d'onglets (Séances / Charge) --------------------------------- */
+.onglets {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; max-width: 560px; margin: 0 auto;
+  display: flex; background: var(--card); border-top: 1px solid var(--border);
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+}
+.onglets button {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0;
+  background: none; border: 0; color: var(--fg-subtle); font: 500 12px "Inter", system-ui, sans-serif; cursor: pointer;
+}
+.onglets button.on { color: var(--accent); }
+
+/* --- Suivi de charge ----------------------------------------------------- */
+.chip {
+  font: 500 14px "Inter", system-ui, sans-serif; height: 38px; padding: 0 14px; border-radius: 99px;
+  border: 1px solid var(--border); background: var(--muted); color: var(--fg); cursor: pointer;
+}
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.graphique { width: 100%; height: auto; display: block; margin: 6px 0 2px; }
+.graphique .barre { fill: var(--muted-2); }
+.graphique .barre.ref { fill: var(--accent); }
+.graphique .barre.encours { fill: transparent; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.graphique .val { fill: var(--fg); font: 600 11px "Inter", system-ui, sans-serif; }
+.graphique .lib { fill: var(--fg-subtle); font: 500 10px "Inter", system-ui, sans-serif; }
+.graphique .chronique { stroke: var(--fg-muted); stroke-width: 1; stroke-dasharray: 3 4; }
+
+/* Zones ACWR : vert optimal, bleu sous-charge, orange vigilance, rouge pic. */
+:root { --zone-bas: #60a5fa; }
+:root[data-theme="light"] { --zone-bas: #2563eb; }
+.badge.zone-ok { color: var(--rpe-facile); background: rgba(34, 197, 94, .14); border-color: transparent; }
+.badge.zone-bas { color: var(--zone-bas); background: rgba(59, 130, 246, .15); border-color: transparent; }
+.badge.zone-vigilance { color: var(--rpe-dur); background: rgba(249, 115, 22, .15); border-color: transparent; }
+.badge.zone-pic { color: var(--rpe-max); background: rgba(239, 68, 68, .15); border-color: transparent; }
+.txt-zone-ok { color: var(--rpe-facile); }
+.txt-zone-bas { color: var(--zone-bas); }
+.txt-zone-vigilance { color: var(--rpe-dur); }
+.txt-zone-pic { color: var(--rpe-max); }
