@@ -5,7 +5,7 @@
  * ⚠ Changer VERSION à chaque modification d'un fichier de l'app, sinon le
  *   téléphone garde l'ancienne version en cache.
  */
-const VERSION = "ma-seance-v9";
+const VERSION = "ma-seance-v10";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "db.js", "sync.js", "demo.js",
   "manifest.webmanifest", "icon-192.png", "icon-512.png", "fonts/inter.woff2"
@@ -14,7 +14,14 @@ const FICHIERS = [
 importScripts("db.js", "sync.js");
 
 self.addEventListener("install", function (e) {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FICHIERS)).then(() => self.skipWaiting()));
+  // cache: "reload" : sinon le navigateur peut resservir l'ANCIEN fichier gardé
+  // dans son cache HTTP (GitHub Pages : 10 min), et la nouvelle version
+  // s'installerait avec l'ancien contenu.
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => c.addAll(FICHIERS.map((f) => new Request(f, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", function (e) {
@@ -38,6 +45,11 @@ self.addEventListener("fetch", function (e) {
       });
     })
   );
+});
+
+// La page demande la version installée (affichée dans les Réglages).
+self.addEventListener("message", function (e) {
+  if (e.data === "version" && e.source) e.source.postMessage({ version: VERSION });
 });
 
 self.addEventListener("sync", function (e) {

@@ -138,7 +138,22 @@ function fmtReps(x, n) {
 /* ============================== DÉMARRAGE ================================ */
 
 async function demarrer() {
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+    // Une nouvelle version vient de s'installer : on recharge pour l'afficher,
+    // sauf en pleine séance (ce sera à la prochaine ouverture).
+    const avaitUnSW = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (avaitUnSW && etat.vue !== "seance" && etat.vue !== "recap") location.reload();
+    });
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data && e.data.version) {
+        etat.versionApp = e.data.version.replace("ma-seance-", "");
+        const el = document.getElementById("version");
+        if (el) el.textContent = etat.versionApp;
+      }
+    });
+  }
 
   etat.config = await kvGet("config");
   etat.prog = await kvGet("programme");
@@ -1124,6 +1139,7 @@ function appliquerTheme(t) {
 
 function vueReglages() {
   const c = etat.config;
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage("version");
   const theme = themeActuel();
   const choix = [["dark", "Sombre"], ["light", "Clair"], ["auto", "Auto"]]
     .map(([v, l]) => `<button class="btn sm ${theme === v ? "" : "outline"}" data-a="theme" data-theme="${v}">${l}</button>`).join("");
@@ -1144,7 +1160,8 @@ function vueReglages() {
       <div class="item"><div class="grow"><p style="font-weight:500">Vidéos sur le téléphone : ${etat.videos.size}</p>
         <p class="xs muted" id="stockage"></p></div>
         <button class="btn sm danger" data-a="vider-videos" ${etat.videos.size ? "" : "disabled"}>Supprimer</button></div>
-    </div>`;
+    </div>
+    <p class="xs subtle mt">Version de l'app : <span id="version">${esc(etat.versionApp || "…")}</span></p>`;
 }
 
 
