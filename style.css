@@ -313,3 +313,19 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 .txt-zone-bas { color: var(--zone-bas); }
 .txt-zone-vigilance { color: var(--rpe-dur); }
 .txt-zone-pic { color: var(--rpe-max); }
+
+/* --- Accueil -------------------------------------------------------------- */
+.hero {
+  border: 1px solid rgba(255, 107, 26, .45); border-radius: 18px; padding: 16px;
+  background: linear-gradient(140deg, rgba(255, 107, 26, .16), rgba(255, 107, 26, 0) 55%), var(--card);
+}
+.hero-titre { font-size: 22px; letter-spacing: -.02em; color: var(--fg); margin: 12px 0 2px; font-weight: 700; }
+.hero-tile { width: 48px; height: 48px; border-radius: 12px; background: var(--accent); color: var(--accent-fg); }
+.hero-btn { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tuile { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+.tuile b { font-size: 26px; letter-spacing: -.02em; }
+.points { display: flex; gap: 5px; margin-top: 4px; }
+.point { width: 10px; height: 10px; border-radius: 99px; background: var(--muted-2); }
+.point.on { background: var(--success); }
+.liste .item.click { cursor: pointer; }

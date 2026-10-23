@@ -848,45 +848,35 @@ function alertesEnvois() {
       <button class="btn sm danger" data-a="supprimer-envoi" data-id="${esc(e.id)}">Supprimer</button></div></div>`).join("");
 }
 
-function carteEnCours() {
-  if (!etat.seance) return "";
-  const c = compteSeries(etat.seance);
-  return `<div class="card focus click" data-a="reprendre">
-    <div class="row"><div class="tile">${ic("chrono")}</div>
-      <div class="grow"><p class="xs subtle">En cours</p><h3>${esc(etat.seance.titre)} · ${esc(nomSemaine(etat.seance.onglet).titre)}</h3>
-        <p class="sm muted tnum">${c.faites}/${c.total} séries</p></div>
-      ${ic("droite")}</div></div>`;
-}
-
 function vueAccueil() {
   const p = etat.prog;
   const prenom = p && p.nom ? String(p.nom).split(" ")[0] : "";
-  let h = `<div class="top"><div><p class="muted sm">${prenom ? "Salut " + esc(prenom) : "Bienvenue"}</p><h1>Tes semaines</h1></div>
+  const jour = new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const aujourdhui = jour.charAt(0).toUpperCase() + jour.slice(1);
+  let h = `<div class="top"><div><p class="muted sm">${esc(aujourdhui)}</p>
+      <h1>${prenom ? "Salut " + esc(prenom) : "Bienvenue"}</h1></div>
     <div class="row">${statut()}<button class="btn icon" data-a="reglages" aria-label="Réglages">${ic("reglages")}</button></div></div>`;
   if (etat.config.demo) h += `<p class="sm muted" style="margin:-8px 0 14px">Mode démo : rien n'est envoyé à ta feuille.</p>`;
-  h += alertesEnvois() + carteEnCours();
+  h += alertesEnvois();
 
   if (!p) {
     return h + `<div class="card vide-etat stack"><p>Ton programme n'est pas encore sur le téléphone.</p>
-      <button class="btn" data-a="maj">${ic("telecharger")}Télécharger mon programme</button></div>`;
+      <button class="btn" data-a="maj">${ic("telecharger")}Télécharger mon programme</button></div>` + onglets("seances");
   }
 
-  h += `<h2>Programme</h2>`;
-  semaines().forEach((sem, k) => {
+  h += carteProchaine() + tuilesSemaine();
+
+  // Toutes les semaines, en liste compacte
+  h += `<h2>Programme</h2><div class="liste">` + semaines().map((sem, k) => {
     const n = nomSemaine(sem.onglet);
     const faites = sem.seances.filter(seanceFaite).length;
     const total = sem.seances.length;
-    const v = videosDe(sem.seances);
-    h += `<div class="card click" data-a="semaine" data-id="${sem.sheetId}">
-      <div class="row"><div class="tile ${total && faites === total ? "ok" : ""}">${ic("calendrier")}</div>
-        <div class="grow"><div class="row"><h3>${esc(n.titre)}</h3>${k === 0 ? '<span class="badge accent">Cette semaine</span>' : ""}</div>
-          <p class="sm muted">${esc(n.dates)}${n.dates ? " · " : ""}${total} séance${total > 1 ? "s" : ""}</p></div>
-        ${ic("droite")}</div>
-      <div class="row mt"><div class="bar grow"><div style="width:${total ? Math.round(100 * faites / total) : 0}%"></div></div>
-        <span class="xs muted tnum">${faites}/${total} faites</span>
-        ${v.total ? `<span class="xs ${v.ici === v.total ? "" : "subtle"} tnum">· 🎬 ${v.ici}/${v.total}</span>` : ""}</div>
-    </div>`;
-  });
+    return `<div class="item click" data-a="semaine" data-id="${sem.sheetId}">
+      <div class="tile ${total && faites === total ? "ok" : ""}">${ic(total && faites === total ? "check" : "calendrier")}</div>
+      <div class="grow"><div class="row"><p style="font-weight:600">${esc(n.titre)}</p>${k === 0 ? '<span class="badge accent">Cette semaine</span>' : ""}</div>
+        <p class="xs muted">${esc(n.dates)}${n.dates ? " · " : ""}${faites}/${total} faite${faites > 1 ? "s" : ""}</p></div>
+      ${ic("droite")}</div>`;
+  }).join("") + `</div>`;
 
   const d = new Date(p.maj);
   h += `<div class="row between mt"><span class="xs subtle">Mis à jour le ${d.toLocaleDateString("fr-FR")} à
@@ -897,6 +887,75 @@ function vueAccueil() {
     kvGet("demoEnvoi").then(afficherEnvoiDemo);
   }
   return h + onglets("seances");
+}
+
+/**
+ * La carte principale de l'accueil : la séance en cours, sinon la première
+ * séance pas encore faite de la semaine en cours, sinon « semaine terminée ».
+ */
+function carteProchaine() {
+  const S = etat.seance;
+  if (S) {
+    const c = compteSeries(S);
+    return `<div class="hero">
+      <div class="row between"><span class="badge accent"><span class="dot"></span>En cours</span>
+        <span class="xs muted tnum">${c.faites}/${c.total} séries</span></div>
+      <h2 class="hero-titre">${esc(S.titre)}</h2>
+      <p class="sm muted">${esc(nomSemaine(S.onglet).titre)} · exercice ${S.etape + 1} sur ${S.etapes.length}</p>
+      <div class="bar accent" style="margin:14px 0"><div style="width:${c.total ? Math.round(100 * c.faites / c.total) : 0}%"></div></div>
+      <button class="btn lg block hero-btn" data-a="reprendre">${ic("chrono")}Reprendre la séance</button></div>`;
+  }
+
+  const sem = semaines()[0];
+  if (!sem || !sem.seances.length) {
+    return `<div class="hero"><h2 class="hero-titre">Pas de séance cette semaine</h2>
+      <p class="sm muted">Félix n'a encore rien programmé. Pense à actualiser plus tard.</p></div>`;
+  }
+  const faite = (x) => seanceFaite(x) || enAttente(x.ref) || !!etat.historique[x.ref];
+  const s = sem.seances.find((x) => !faite(x));
+  if (!s) {
+    return `<div class="hero"><span class="badge ok">${ic("check", "sm")}Semaine terminée</span>
+      <h2 class="hero-titre">Bien joué 💪</h2>
+      <p class="sm muted">Toutes les séances de ${esc(nomSemaine(sem.onglet).titre)} sont faites. Un match ou une course en plus ? Déclare-la dans l'onglet Charge.</p>
+      <button class="btn lg block outline mt" data-a="onglet-charge">${ic("charge")}Voir ma charge</button></div>`;
+  }
+
+  const series = s.exos.reduce((a, x) => a + (x.nbSeries || 1), 0);
+  const v = videosDe([s]);
+  const tel = Object.keys(etat.telechargements).length > 0;
+  const videos = !v.total ? "" : v.ici >= v.total ? `${ic("check", "sm")}Vidéos prêtes hors réseau`
+    : tel ? `${ic("telecharger", "sm")}Vidéos en téléchargement ${v.ici}/${v.total}` : `${ic("sansvideo", "sm")}${v.total - v.ici} vidéo(s) à télécharger`;
+  return `<div class="hero">
+    <div class="row between"><span class="badge accent">Prochaine séance</span>
+      <span class="xs muted">${esc(nomSemaine(sem.onglet).titre)}</span></div>
+    <div class="row" style="margin-top:12px;gap:12px"><div class="tile hero-tile">${ic(s.type === "course" ? "course" : "haltere", "lg")}</div>
+      <div class="grow"><h2 class="hero-titre" style="margin:0">${esc(s.titre)}</h2>
+        <p class="sm muted">${s.type === "course" ? "Course" : "Salle"} · ${s.exos.length} exos · ${series} séries</p></div></div>
+    <p class="xs muted row" style="margin:12px 0 0">${videos}</p>
+    <div class="row" style="margin-top:14px">
+      <button class="btn lg grow hero-btn" data-a="commencer" data-ref="${esc(s.ref)}">Commencer</button>
+      <button class="btn lg outline" data-a="ouvrir" data-ref="${esc(s.ref)}" aria-label="Voir la séance">Voir</button></div>
+  </div>`;
+}
+
+/** « Ta semaine » : séances faites / prévues, et la charge de la semaine si le suivi est installé. */
+function tuilesSemaine() {
+  const sem = semaines()[0];
+  if (!sem) return "";
+  const total = sem.seances.length;
+  const faites = sem.seances.filter((x) => seanceFaite(x) || enAttente(x.ref)).length;
+  const points = sem.seances.map((x) => `<span class="point ${seanceFaite(x) || enAttente(x.ref) ? "on" : ""}"></span>`).join("");
+  let h = `<h2>Ta semaine</h2><div class="tuiles">
+    <div class="tuile click" data-a="semaine" data-id="${sem.sheetId}"><span class="xs muted">Séances</span>
+      <b class="tnum">${faites}<span class="muted">/${total}</span></b><div class="points">${points}</div></div>`;
+  const C = etat.charge;
+  if (C && C.equipe) {
+    const zone = ZONES[C.analyse.alerte] || ["zone-neutre", ""];
+    h += `<div class="tuile click" data-a="onglet-charge"><span class="xs muted">Charge</span>
+      <b class="tnum">${C.semaines[0].charge || 0}</b>
+      <span class="badge ${zone[0]}" style="align-self:flex-start"><span class="dot"></span>${esc(C.analyse.alerte)}</span></div>`;
+  }
+  return h + `</div>`;
 }
 
 function afficherEnvoiDemo(envoi) {
