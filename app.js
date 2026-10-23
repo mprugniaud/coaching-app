@@ -302,6 +302,17 @@ async function preparerHorsLigne(cle, refs, discret) {
   if (etat.telechargements[cle] || !etat.config || etat.config.demo) return;
   const t = { fait: 0, total: 0, erreurs: 0, message: "" };
   etat.telechargements[cle] = t;
+  try {
+    await preparer_(t, refs, discret);
+  } catch (err) {
+    toast("Téléchargement interrompu : " + err.message, 5000);
+  } finally {
+    delete etat.telechargements[cle];
+    rendreDiscret();
+  }
+}
+
+async function preparer_(t, refs, discret) {
   rendreDiscret();
   await majProgramme(true);
   majSeanceDepuisProgramme();
@@ -318,8 +329,6 @@ async function preparerHorsLigne(cle, refs, discret) {
   });
   t.total = yts.size;
   if (!yts.size) {
-    delete etat.telechargements[cle];
-    rendreDiscret();
     if (!discret) toast(absentes ? absentes + " vidéo(s) pas encore dans le Drive." : "Tout est déjà sur le téléphone.");
     return;
   }
@@ -344,10 +353,13 @@ async function preparerHorsLigne(cle, refs, discret) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(TELECHARGEMENTS_PARALLELES, file.length) }, ouvrier));
-  delete etat.telechargements[cle];
   toast(t.erreurs ? t.erreurs + " vidéo(s) en échec : " + t.message
                   : "✓ " + t.total + " vidéo(s) sur le téléphone" + (absentes ? " (" + absentes + " pas dans le Drive)" : ""), 4000);
-  rendreDiscret();
+}
+
+/** Avancement lisible : « Recherche des vidéos… » tant que le nombre n'est pas connu. */
+function texteTelechargement(t) {
+  return t.total ? `Téléchargement ${t.fait}/${t.total}…` : "Recherche des vidéos…";
 }
 
 
@@ -797,8 +809,8 @@ function vueSemaine() {
     <div class="top"><div><h1>${esc(n.titre)}</h1><p class="muted">${esc(n.dates)}</p></div>${statut()}</div>`;
   h += alertesEnvois();
   if (t) {
-    h += `<div class="card stack"><div class="row between"><span class="sm">Téléchargement des vidéos…</span>
-      <span class="sm muted tnum">${t.fait}/${t.total}</span></div>
+    h += `<div class="card stack"><div class="row between"><span class="sm">${t.total ? "Téléchargement des vidéos…" : "Recherche des vidéos…"}</span>
+      <span class="sm muted tnum">${t.total ? t.fait + "/" + t.total : ""}</span></div>
       <div class="bar accent"><div style="width:${t.total ? Math.round(100 * t.fait / t.total) : 5}%"></div></div></div>`;
   } else if (v.ici < v.total || !v.total) {
     h += `<button class="btn outline block" data-a="preparer" data-id="${sem.sheetId}" ${etat.enLigne ? "" : "disabled"}>
@@ -875,7 +887,7 @@ function vueApercu() {
     <div class="stats"><div><b>${s.exos.length}</b><span>exercices</span></div><div><b>${series}</b><span>séries</span></div>
       <div><b class="tnum">${v.ici}/${v.total}</b><span>vidéos</span></div></div>
     ${v.ici < v.total || tel ? `<button class="btn outline block" style="margin-bottom:14px" data-a="preparer-seance" data-ref="${esc(s.ref)}" ${etat.enLigne && !tel ? "" : "disabled"}>
-      ${ic("telecharger")}${tel ? `Téléchargement ${tel.fait}/${tel.total}…` : "Télécharger les vidéos"}</button>` : ""}
+      ${ic("telecharger")}${tel ? texteTelechargement(tel) : "Télécharger les vidéos"}</button>` : ""}
     ${faite && !encours ? `<h2 class="row">${ic("historique", "sm")}Ce que tu as fait</h2>` : ""}
     <div class="liste">${liste}</div>
     <div class="pied">${encours
