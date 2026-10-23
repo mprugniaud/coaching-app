@@ -930,7 +930,7 @@ function vueApercu() {
           ${fait ? `<p class="xs ${fait === "aucune série" ? "subtle" : ""}" style="margin-top:2px">${ic(fait === "aucune série" || (h && h.saute) ? "x" : "check", "sm")} ${esc(fait)}</p>` : ""}
           ${faite && comm ? `<p class="xs subtle" style="margin-top:2px">${esc(comm.indexOf("📱") === -1 && h ? "📱 " + comm : comm)}</p>` : ""}</div>
         ${x.lien && !(x.yt && etat.videos.has(x.yt)) ? `<span class="subtle" title="Vidéo pas sur le téléphone">${ic("sansvideo", "sm")}</span>` : ""}
-        ${rpeRempli(rpe) ? `<span class="badge">RPE ${esc(rpe)}</span>` : ""}</div>`;
+        ${rpeRempli(rpe) ? `<span class="badge ${classeRPE(num(rpe))}">RPE ${esc(rpe)}</span>` : ""}</div>`;
     });
   });
 
@@ -1086,7 +1086,7 @@ async function brancherVideos() {
   }
 }
 
-/** Couleur d'un RPE (récapitulatif) : 1–4 facile, 5–6 modéré, 7–8 dur, 9–10 max. */
+/** Couleur d'un RPE (récapitulatif, écran d'une séance) : 1–4 facile, 5–6 modéré, 7–8 dur, 9–10 max. */
 function classeRPE(v) {
   return v >= 9 ? "rpe-max" : v >= 7 ? "rpe-dur" : v >= 5 ? "rpe-modere" : "rpe-facile";
 }
