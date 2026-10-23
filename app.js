@@ -251,16 +251,55 @@ async function majProgramme(silencieux) {
 }
 
 /**
+ * La séance en cours garde sa copie des exos : on y reporte les liens et la
+ * présence au Drive relus (un lien corrigé dans la feuille entre-temps).
+ */
+function majSeanceDepuisProgramme() {
+  const S = etat.seance;
+  const t = S && trouverSeance(S.ref);
+  if (!t) return;
+  S.exos.forEach((x) => {
+    const p = t.seance.exos.find((y) => y.ligne === x.ligne && nomCle(y.nom) === nomCle(x.nom));
+    if (p) Object.assign(x, { lien: p.lien, yt: p.yt, video: p.video });
+  });
+  sauver();
+}
+
+/** Copie une vidéo du Drive sur le téléphone. */
+async function telechargerVideo(yt) {
+  const r = await fetch(etat.config.url + "?api=video&cle=" + encodeURIComponent(etat.config.cle) +
+                        "&yt=" + encodeURIComponent(yt));
+  const rep = await r.json();
+  if (!rep.ok) throw new Error(rep.erreur);
+  const blob = await (await fetch("data:" + rep.mime + ";base64," + rep.base64)).blob();
+  await videoSet({ yt: yt, blob: blob, taille: blob.size, date: Date.now() });
+  etat.videos.add(yt);
+}
+
+/**
+ * Redessine pour montrer l'avancement — sauf en pleine saisie dans une
+ * séance (on effacerait le chiffre en cours de frappe).
+ */
+function rendreDiscret() {
+  const a = document.activeElement;
+  if (etat.vue === "seance" && a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) return;
+  rendre();
+}
+
+/**
  * Télécharge les vidéos manquantes d'une liste de séances. Le programme est
  * relu d'abord : une vidéo déposée depuis la dernière mise à jour (ou un lien
  * corrigé dans la feuille) est ainsi prise en compte.
+ * @param {boolean=} discret  lancé tout seul (ouverture d'une séance) : pas de
+ *        message si tout est déjà là
  */
-async function preparerHorsLigne(cle, refs) {
-  if (etat.telechargements[cle]) return;
+async function preparerHorsLigne(cle, refs, discret) {
+  if (etat.telechargements[cle] || !etat.config || etat.config.demo) return;
   const t = { fait: 0, total: 0, erreurs: 0, message: "" };
   etat.telechargements[cle] = t;
-  rendre();
+  rendreDiscret();
   await majProgramme(true);
+  majSeanceDepuisProgramme();
 
   const yts = new Set();
   let absentes = 0;
@@ -275,34 +314,28 @@ async function preparerHorsLigne(cle, refs) {
   t.total = yts.size;
   if (!yts.size) {
     delete etat.telechargements[cle];
-    rendre();
-    toast(absentes ? absentes + " vidéo(s) pas encore dans le Drive." : "Tout est déjà sur le téléphone.");
+    rendreDiscret();
+    if (!discret) toast(absentes ? absentes + " vidéo(s) pas encore dans le Drive." : "Tout est déjà sur le téléphone.");
     return;
   }
 
   // Sans ça, Android peut vider le stockage d'une app peu utilisée.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-  rendre();
+  rendreDiscret();
   for (const yt of yts) {
     try {
-      const r = await fetch(etat.config.url + "?api=video&cle=" + encodeURIComponent(etat.config.cle) +
-                            "&yt=" + encodeURIComponent(yt));
-      const rep = await r.json();
-      if (!rep.ok) throw new Error(rep.erreur);
-      const blob = await (await fetch("data:" + rep.mime + ";base64," + rep.base64)).blob();
-      await videoSet({ yt: yt, blob: blob, taille: blob.size, date: Date.now() });
-      etat.videos.add(yt);
+      await telechargerVideo(yt);
     } catch (err) {
       t.erreurs++;
       t.message = err.message;
     }
     t.fait++;
-    rendre();
+    rendreDiscret();
   }
   delete etat.telechargements[cle];
   toast(t.erreurs ? t.erreurs + " vidéo(s) en échec : " + t.message
-                  : "✓ Prêt hors réseau" + (absentes ? " (" + absentes + " vidéo(s) pas dans le Drive)" : ""), 5000);
-  rendre();
+                  : "✓ " + t.total + " vidéo(s) sur le téléphone" + (absentes ? " (" + absentes + " pas dans le Drive)" : ""), 4000);
+  rendreDiscret();
 }
 
 
@@ -456,6 +489,7 @@ function commencer(ref) {
   sauver();
   activerSon();
   naviguer("seance");
+  if (etat.enLigne) preparerHorsLigne(ref, [ref], true);
 }
 
 function sortirSeance() {
@@ -831,8 +865,15 @@ function carteExo(x, i, lettre) {
   let media;
   if (x.yt && etat.videos.has(x.yt)) media = `<div class="media"><div class="vplace" data-yt="${esc(x.yt)}"></div></div>`;
   else if (x.lien) {
-    media = `<div class="media"><div class="vide">${ic("sansvideo", "lg")}<span>Vidéo pas sur le téléphone</span>
-      ${etat.enLigne ? `<a class="btn sm outline" href="${esc(x.lien)}" target="_blank" rel="noopener">${ic("lien", "sm")}La voir en ligne</a>` : ""}</div></div>`;
+    const encours = etat.telechargements["v-" + x.yt];
+    let actions = "";
+    if (etat.enLigne && x.video) {
+      actions = `<button class="btn sm" data-a="video-une" data-i="${i}" ${encours ? "disabled" : ""}>${ic("telecharger", "sm")}${encours ? "Téléchargement…" : "Télécharger"}</button>`;
+    }
+    if (etat.enLigne) actions += `<a class="btn sm outline" href="${esc(x.lien)}" target="_blank" rel="noopener">${ic("lien", "sm")}En ligne</a>`;
+    const texte = !x.video ? "Vidéo pas encore dans le Drive" : etat.enLigne ? "Vidéo pas sur le téléphone" : "Vidéo pas téléchargée (pas de réseau)";
+    media = `<div class="media"><div class="vide">${ic("sansvideo", "lg")}<span>${texte}</span>
+      ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`;
   } else media = "";
 
   const chips = [x.charge, x.series && x.series + (Number(x.series) > 1 ? " séries" : " série"),
@@ -1015,7 +1056,11 @@ const actions = {
   "demo": () => changerConfig({ url: "", cle: "", demo: true }),
   "maj": () => majProgramme(false),
   "semaine": (d) => { etat.semaine = Number(d.id); naviguer("semaine"); },
-  "ouvrir": (d) => { etat.apercu = d.ref; naviguer("apercu"); },
+  "ouvrir": (d) => {
+    etat.apercu = d.ref;
+    naviguer("apercu");
+    if (etat.enLigne) preparerHorsLigne(d.ref, [d.ref], true);
+  },
   "preparer": (d) => {
     const sem = semaines().find((s) => s.sheetId === Number(d.id));
     if (sem) preparerHorsLigne("sem-" + sem.sheetId, sem.seances.map((s) => s.ref));
@@ -1024,7 +1069,21 @@ const actions = {
   "retour": () => history.back(),
   "reglages": () => naviguer("reglages"),
   "commencer": (d) => commencer(d.ref),
-  "reprendre": () => { activerSon(); naviguer("seance"); },
+  "reprendre": () => {
+    activerSon();
+    naviguer("seance");
+    if (etat.enLigne) preparerHorsLigne(etat.seance.ref, [etat.seance.ref], true);
+  },
+  "video-une": async (d) => {
+    const x = etat.seance.exos[d.i];
+    if (etat.telechargements["v-" + x.yt]) return;
+    etat.telechargements["v-" + x.yt] = { fait: 0, total: 1 };
+    rendre();
+    try { await telechargerVideo(x.yt); }
+    catch (err) { toast("Vidéo non téléchargée : " + err.message, 4000); }
+    delete etat.telechargements["v-" + x.yt];
+    rendreDiscret();
+  },
   "reessayer": async (d) => {
     const e = etat.envois.find((x) => x.id === d.id);
     if (!e) return;
