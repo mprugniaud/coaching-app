@@ -17,6 +17,9 @@ const $app = document.getElementById("app");
 const $repos = document.getElementById("repos");
 const $toast = document.getElementById("toast");
 
+/** Vidéos téléchargées en même temps (Apps Script accepte des appels simultanés). */
+const TELECHARGEMENTS_PARALLELES = 4;
+
 /** Version de la séance en cours sauvegardée : une ancienne est abandonnée. */
 const VERSION_SEANCE = 2;
 
@@ -322,16 +325,23 @@ async function preparerHorsLigne(cle, refs, discret) {
   // Sans ça, Android peut vider le stockage d'une app peu utilisée.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   rendreDiscret();
-  for (const yt of yts) {
-    try {
-      await telechargerVideo(yt);
-    } catch (err) {
-      t.erreurs++;
-      t.message = err.message;
+  // Plusieurs à la fois : chaque appel à Apps Script met quelques secondes à
+  // démarrer, c'est ce délai (pas la taille des vidéos) qui fait la durée.
+  const file = [...yts];
+  const ouvrier = async () => {
+    while (file.length) {
+      const yt = file.shift();
+      try {
+        await telechargerVideo(yt);
+      } catch (err) {
+        t.erreurs++;
+        t.message = err.message;
+      }
+      t.fait++;
+      rendreDiscret();
     }
-    t.fait++;
-    rendreDiscret();
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(TELECHARGEMENTS_PARALLELES, file.length) }, ouvrier));
   delete etat.telechargements[cle];
   toast(t.erreurs ? t.erreurs + " vidéo(s) en échec : " + t.message
                   : "✓ " + t.total + " vidéo(s) sur le téléphone" + (absentes ? " (" + absentes + " pas dans le Drive)" : ""), 4000);
