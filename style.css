@@ -1,7 +1,7 @@
 /*
  * « Ma séance » — design sobre façon shadcn/ui : palette zinc, bordures fines,
  * une seule couleur d'accent (l'orange de Félix), vert pour ce qui est fait.
- * Sombre par défaut (la salle), clair si le téléphone est en mode clair.
+ * Sombre par défaut (la salle) ; clair ou « Auto » au choix dans les Réglages.
  */
 @font-face {
   font-family: "Inter";
@@ -33,8 +33,9 @@
   --shadow: 0 8px 30px rgba(0, 0, 0, .45);
   color-scheme: dark;
 }
+/* Thème clair : choisi dans les Réglages, ou « Auto » si le téléphone est en clair. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root[data-theme="auto"] {
     --bg: #fafafa;
     --card: #ffffff;
     --muted: #f4f4f5;
@@ -55,6 +56,27 @@
     --shadow: 0 8px 30px rgba(0, 0, 0, .12);
     color-scheme: light;
   }
+}
+:root[data-theme="light"] {
+  --bg: #fafafa;
+  --card: #ffffff;
+  --muted: #f4f4f5;
+  --muted-2: #e4e4e7;
+  --border: #e4e4e7;
+  --fg: #09090b;
+  --fg-muted: #52525b;
+  --fg-subtle: #a1a1aa;
+  --primary: #18181b;
+  --primary-fg: #fafafa;
+  --accent: #d97706;
+  --accent-fg: #ffffff;
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, .12);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, .1);
+  --ring: rgba(9, 9, 11, .2);
+  --shadow: 0 8px 30px rgba(0, 0, 0, .12);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }

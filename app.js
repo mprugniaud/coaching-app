@@ -1000,8 +1000,22 @@ function vueRecap() {
     <div class="pied"><button class="btn lg success" data-a="enregistrer">${ic("envoi")}Enregistrer la séance</button></div>`;
 }
 
+/** Thème : "dark" (défaut), "light" ou "auto" (suit le téléphone). Préférence de cet appareil. */
+function themeActuel() {
+  try { return localStorage.getItem("theme") || "dark"; } catch (err) { return "dark"; }
+}
+
+function appliquerTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("theme", t); } catch (err) {}
+  if (window.couleurBarre) couleurBarre();
+}
+
 function vueReglages() {
   const c = etat.config;
+  const theme = themeActuel();
+  const choix = [["dark", "Sombre"], ["light", "Clair"], ["auto", "Auto"]]
+    .map(([v, l]) => `<button class="btn sm ${theme === v ? "" : "outline"}" data-a="theme" data-theme="${v}">${l}</button>`).join("");
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => {
       const el = document.getElementById("stockage");
@@ -1011,6 +1025,8 @@ function vueReglages() {
   return `<button class="back" data-a="retour">${ic("gauche", "sm")}Semaines</button>
     <div class="top"><h1>Réglages</h1></div>
     <div class="liste">
+      <div class="item"><div class="grow"><p style="font-weight:500">Apparence</p>
+        <p class="xs muted">Auto suit le réglage du téléphone</p></div><div class="row">${choix}</div></div>
       <div class="item"><div class="grow"><p style="font-weight:500">Lien perso</p>
         <p class="xs muted trunc">${c.demo ? "Démo" : esc(c.url.replace(/^https:\/\//, "")) + "?cle=" + esc(c.cle.slice(0, 4)) + "…"}</p></div>
         <button class="btn sm outline" data-a="changer-lien">${c.demo ? "Quitter la démo" : "Changer"}</button></div>
@@ -1078,6 +1094,7 @@ const actions = {
   "preparer-seance": (d) => preparerHorsLigne(d.ref, [d.ref]),
   "retour": () => history.back(),
   "reglages": () => naviguer("reglages"),
+  "theme": (d) => { appliquerTheme(d.theme); rendre(); },
   "commencer": (d) => commencer(d.ref),
   "reprendre": () => {
     activerSon();
