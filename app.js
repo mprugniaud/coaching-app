@@ -754,7 +754,11 @@ async function garderEcran(actif) {
 function rendre() {
   const vues = { config: vueConfig, accueil: vueAccueil, semaine: vueSemaine, apercu: vueApercu,
                  seance: vueSeance, recap: vueRecap, reglages: vueReglages };
-  $app.innerHTML = (vues[etat.vue] || vueAccueil)() + (etat.menu !== null ? vueMenu() : "");
+  // « FLX TRAINING » en haut de chaque écran ; la séance l'a dans sa barre fixe,
+  // l'écran de bienvenue a le grand logo.
+  const avecMarque = !["config", "seance"].includes(etat.vue);
+  $app.innerHTML = (avecMarque ? marque() : "") + (vues[etat.vue] || vueAccueil)() +
+    (etat.menu !== null ? vueMenu() : "");
   if (etat.vue === "seance") {
     brancherVideos();
     afficherRepos();
@@ -810,7 +814,7 @@ function carteEnCours() {
 function vueAccueil() {
   const p = etat.prog;
   const prenom = p && p.nom ? String(p.nom).split(" ")[0] : "";
-  let h = marque() + `<div class="top"><div><p class="muted sm">${prenom ? "Salut " + esc(prenom) : "Bienvenue"}</p><h1>Tes semaines</h1></div>
+  let h = `<div class="top"><div><p class="muted sm">${prenom ? "Salut " + esc(prenom) : "Bienvenue"}</p><h1>Tes semaines</h1></div>
     <div class="row">${statut()}<button class="btn icon" data-a="reglages" aria-label="Réglages">${ic("reglages")}</button></div></div>`;
   if (etat.config.demo) h += `<p class="sm muted" style="margin:-8px 0 14px">Mode démo : rien n'est envoyé à ta feuille.</p>`;
   h += alertesEnvois() + carteEnCours();
@@ -969,6 +973,7 @@ function vueSeance() {
 
   return `
     <div class="barre-seance">
+      ${marque()}
       <div class="row between">
         <button class="btn icon" data-a="menu-seance" aria-label="Quitter">${ic("x")}</button>
         <div class="titre"><b>${esc(S.titre)}</b><span class="sm muted tnum"><span id="chrono">${mmss(Math.floor((Date.now() - S.debut) / 1000))}</span> · ${c.faites}/${c.total} séries</span></div>

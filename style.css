@@ -148,7 +148,7 @@ a { color: inherit; }
 .badge.danger { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
 .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; }
 .marque { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--fg-muted); margin-bottom: 10px; }
-.marque svg { width: 26px; height: 26px; border-radius: 7px; display: block; }
+.marque svg { width: 32px; height: 32px; border-radius: 8px; display: block; }
 .logo-grand { width: 96px; height: 96px; border-radius: 24px; overflow: hidden; margin: 8px 0 18px; box-shadow: var(--shadow); }
 .logo-grand svg { width: 100%; height: 100%; display: block; }
 .tile { width: 40px; height: 40px; border-radius: 10px; background: var(--muted); display: grid; place-items: center; flex: none; color: var(--fg); }
