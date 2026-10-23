@@ -333,3 +333,4 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 /* Icône d'actualisation qui tourne */
 @keyframes tourne { to { transform: rotate(360deg); } }
 svg.i.tourne { animation: tourne .9s linear infinite; }
+.tile > svg:not(.i) { width: 100%; height: 100%; border-radius: 10px; display: block; }

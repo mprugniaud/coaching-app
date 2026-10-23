@@ -23,6 +23,13 @@ const TELECHARGEMENTS_PARALLELES = 6;
 /** Programme jugé assez frais pour ne pas le redemander avant de télécharger (ms). */
 const PROGRAMME_FRAIS = 5 * 60 * 1000;
 
+/**
+ * Serveur (page web du Pilotage). Le lien magique « …/coaching-app/#cle=… »
+ * n'apporte que le code : l'adresse du serveur est ici. Un « &serveur=… » dans
+ * le lien la remplace (environnement de test).
+ */
+const SERVEUR = "https://script.google.com/macros/s/AKfycbwg5uKntHvtEeS2QgknmmYuJYXUd-QTS1AbYm4quPArtNXDUciCh1yrUacNu-QzUO41JQ/exec";
+
 /** Version de la séance en cours sauvegardée : une ancienne est abandonnée. */
 const VERSION_SEANCE = 2;
 
@@ -45,7 +52,8 @@ const etat = {
   form: null,          // séance en cours de déclaration
   progEdit: null,      // séance programmée en cours de modification
   videoEls: {},        // yt → <video>, gardées d'un rendu à l'autre
-  enLigne: navigator.onLine
+  enLigne: navigator.onLine,
+  installer: null      // proposition d'installation de Chrome (beforeinstallprompt)
 };
 
 
@@ -180,6 +188,7 @@ async function demarrer() {
   }
 
   etat.config = await kvGet("config");
+  await lienMagique();
   etat.prog = await kvGet("programme");
   etat.seance = await kvGet("encours");
   etat.historique = (await kvGet("historique")) || {};
@@ -195,6 +204,7 @@ async function demarrer() {
   history.replaceState({ vue: etat.vue }, "");
   rendre();
 
+  if (etat.bienvenue) toast("Bienvenue sur FLX Training ! Ton programme se télécharge…", 4000);
   if (etat.config) {
     synchroniser();
     if (navigator.onLine) {
@@ -204,6 +214,37 @@ async function demarrer() {
   }
   setInterval(tic, 1000);
 }
+
+/**
+ * L'élève a ouvert son lien perso (« #cle=… », QR code de Félix) : l'app se
+ * configure toute seule. Le code est retiré de la barre d'adresse aussitôt.
+ * Lien d'un AUTRE compte que celui en place : on demande avant de remplacer.
+ */
+async function lienMagique() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const cle = p.get("cle") || "";
+  if (!/^[0-9a-f]{32}$/.test(cle)) return;
+  history.replaceState(null, "", location.pathname);
+  const url = p.get("serveur") || SERVEUR;
+
+  const c = etat.config;
+  if (c && !c.demo && c.cle === cle && c.url === url) return;           // déjà configurée
+  if (c && !c.demo && !confirm("Ce lien est celui d'un autre compte. Remplacer le compte actuel sur ce téléphone ?")) return;
+
+  // Nouveau compte : rien de l'ancien ne doit se mélanger (séance en cours, programme, charge, historique).
+  for (const k of ["programme", "charge", "encours", "historique", "demoEnvoi"]) await kvDel(k);
+  etat.config = { url: url, cle: cle, demo: false };
+  await kvSet("config", etat.config);
+  etat.bienvenue = true;
+}
+
+// Chrome propose d'installer l'app : on garde la proposition pour un bouton à nous.
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  etat.installer = e;
+  if (etat.vue === "accueil") rendre();
+});
+window.addEventListener("appinstalled", () => { etat.installer = null; rendre(); });
 
 async function rafraichirLocaux() {
   etat.envois = await envoisTous();
@@ -853,10 +894,15 @@ function vueConfig() {
     <div class="logo-grand">${LOGO_SVG}</div>
     <div class="top"><div><p class="muted sm">Bienvenue sur</p><h1>FLX Training</h1></div></div>
     <div class="card stack">
-      <h3>Ton lien perso</h3>
-      <p class="muted sm">Celui du bouton « 📱 Déclarer mes séances » en haut de ta feuille. Il se termine par <b>?cle=…</b></p>
+      <h3>Pour commencer</h3>
+      <p class="muted sm">Scanne le <b>QR code</b> que t'a donné Félix, ou ouvre le <b>lien</b> qu'il t'a envoyé
+        (aussi en haut de ta feuille : « 📱 Ouvrir l'app FLX Training »). L'app se configure toute seule.</p>
+    </div>
+    <div class="card stack">
+      <h3>Pas de lien sous la main ?</h3>
+      <p class="muted sm">Colle ici ton lien perso.</p>
       <textarea id="lien" class="champ" placeholder="https://script.google.com/macros/s/…/exec?cle=…"></textarea>
-      <button class="btn block lg" data-a="config-ok">Continuer</button>
+      <button class="btn block" data-a="config-ok">Continuer</button>
     </div>
     <button class="btn ghost block mt" data-a="demo">Essayer en démo</button>`;
 }
@@ -878,6 +924,11 @@ function vueAccueil() {
     <div class="row">${statut()}<button class="btn icon" data-a="reglages" aria-label="Réglages">${ic("reglages")}</button></div></div>`;
   if (etat.config.demo) h += `<p class="sm muted" style="margin:-8px 0 14px">Mode démo : rien n'est envoyé à ta feuille.</p>`;
   h += alertesEnvois();
+  if (etat.installer) {
+    h += `<div class="card stack" style="margin-bottom:12px"><div class="row"><div class="tile">${LOGO_SVG}</div>
+      <div class="grow"><h3>Installe FLX Training</h3><p class="xs muted">Une icône sur ton écran d'accueil, en plein écran, même sans réseau.</p></div></div>
+      <button class="btn block hero-btn" data-a="installer">${ic("telecharger")}Installer l'app</button></div>`;
+  }
 
   if (!p) {
     return h + `<div class="card vide-etat stack"><p>Ton programme n'est pas encore sur le téléphone.</p>
@@ -1528,6 +1579,10 @@ async function envoyerCharge(action, donnees, resume) {
 function lireLien(texte) {
   try {
     const u = new URL(String(texte).trim());
+    const h = new URLSearchParams(u.hash.slice(1));
+    if (/^[0-9a-f]{32}$/.test(h.get("cle") || "")) {          // lien de l'app (#cle=…)
+      return { url: h.get("serveur") || SERVEUR, cle: h.get("cle"), demo: false };
+    }
     const cle = u.searchParams.get("cle") || "";
     if (!/\/exec$/.test(u.pathname) || !/^[0-9a-f]{32}$/.test(cle)) return null;
     return { url: u.origin + u.pathname, cle: cle, demo: false };
@@ -1580,6 +1635,14 @@ const actions = {
   "preparer-seance": (d) => preparerHorsLigne(d.ref, [d.ref]),
   "retour": () => history.back(),
   "reglages": () => naviguer("reglages"),
+  "installer": async () => {
+    const e = etat.installer;
+    if (!e) return;
+    e.prompt();
+    try { await e.userChoice; } catch (err) {}
+    etat.installer = null;
+    rendre();
+  },
   // Suivi de charge
   "onglet-seances": () => allerA("accueil"),
   "onglet-charge": () => { naviguer("charge"); if (etat.enLigne && !etat.charge) majCharge(false); },
