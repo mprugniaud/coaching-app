@@ -1,5 +1,5 @@
 /*
- * « Ma séance » — l'app de l'élève.
+ * « FLX Training » — l'app de l'élève (anciennement « Ma séance »).
  *
  * Avant la salle (avec réseau) : le programme et les vidéos sont copiés sur le
  * téléphone (IndexedDB). À la salle (sans réseau) : semaine → séance → un
@@ -70,6 +70,14 @@ const ICONES = {
   historique: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   envoi: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>'
 };
+/** Logo FLX (même dessin que app/icon.svg), en ligne pour marcher hors réseau. */
+const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" fill="#ff6b1a"/>' +
+  '<g transform="translate(56 184) scale(1.42) skewX(-12)" fill="#0b1f4d"><rect x="20" width="22" height="100"/>' +
+  '<rect x="20" width="68" height="22"/><rect x="20" y="40" width="56" height="20"/><rect x="104" width="22" height="100"/>' +
+  '<rect x="104" y="78" width="64" height="22"/><polygon points="182,0 207,0 262,100 237,100"/>' +
+  '<polygon points="240,0 268,0 248,38 266,38 204,104 222,56 202,56"/></g></svg>';
+const marque = () => `<div class="marque">${LOGO_SVG}FLX TRAINING</div>`;
+
 const ic = (nom, cls) => `<svg class="i ${cls || ""}" viewBox="0 0 24 24" aria-hidden="true">${ICONES[nom]}</svg>`;
 
 
@@ -771,7 +779,8 @@ function rendreStatut() {
 
 function vueConfig() {
   return `
-    <div class="top"><div><p class="muted sm">Bienvenue</p><h1>Ma séance</h1></div></div>
+    <div class="logo-grand">${LOGO_SVG}</div>
+    <div class="top"><div><p class="muted sm">Bienvenue sur</p><h1>FLX Training</h1></div></div>
     <div class="card stack">
       <h3>Ton lien perso</h3>
       <p class="muted sm">Celui du bouton « 📱 Déclarer mes séances » en haut de ta feuille. Il se termine par <b>?cle=…</b></p>
@@ -801,7 +810,7 @@ function carteEnCours() {
 function vueAccueil() {
   const p = etat.prog;
   const prenom = p && p.nom ? String(p.nom).split(" ")[0] : "";
-  let h = `<div class="top"><div><p class="muted sm">${prenom ? "Salut " + esc(prenom) : "Ma séance"}</p><h1>Tes semaines</h1></div>
+  let h = marque() + `<div class="top"><div><p class="muted sm">${prenom ? "Salut " + esc(prenom) : "Bienvenue"}</p><h1>Tes semaines</h1></div>
     <div class="row">${statut()}<button class="btn icon" data-a="reglages" aria-label="Réglages">${ic("reglages")}</button></div></div>`;
   if (etat.config.demo) h += `<p class="sm muted" style="margin:-8px 0 14px">Mode démo : rien n'est envoyé à ta feuille.</p>`;
   h += alertesEnvois() + carteEnCours();

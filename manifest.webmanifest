@@ -1,7 +1,7 @@
 {
-  "name": "Ma séance",
-  "short_name": "Ma séance",
-  "description": "Faire sa séance hors réseau et la renvoyer à Félix",
+  "name": "FLX Training",
+  "short_name": "FLX Training",
+  "description": "FLX Training — tes séances de Félix, même sans réseau",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",

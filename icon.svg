@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- FLX Training — icône. Fond orange, FLX inclinés en marine, le X est un trait + un éclair. -->
+  <rect width="512" height="512" fill="#ff6b1a"/>
+  <g transform="translate(56 184) scale(1.42) skewX(-12)"><g fill="#0b1f4d"><rect x="20" y="0" width="22" height="100"/><rect x="20" y="0" width="68" height="22"/><rect x="20" y="40" width="56" height="20"/><rect x="104" y="0" width="22" height="100"/><rect x="104" y="78" width="64" height="22"/><polygon points="182,0 207,0 262,100 237,100"/></g><polygon fill="#0b1f4d" points="240,0 268,0 248,38 266,38 204,104 222,56 202,56"/></g>
+</svg>
