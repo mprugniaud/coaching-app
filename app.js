@@ -635,7 +635,6 @@ function apresSerie(s) {
   const reste = groupe.some((x) => x.sets.some((se) => !se.fait));
   const derniere = S.etape === S.etapes.length - 1;
   if (!reste && derniere) { finRepos(); sonFinSeance(); return; }
-  if (!reste) jouerSon("exo");   // exo (ou enchaînement) terminé
 
   const sec = Math.max(0, ...groupe.map((x) => x.recupSec || 0));
   if (!sec) return;
@@ -1955,7 +1954,10 @@ function fermerMenuOuRendre() {
 
 function changerEtape(delta) {
   const S = etat.seance;
+  const avant = S.etape;
   S.etape = Math.min(Math.max(S.etape + delta, 0), S.etapes.length - 1);
+  // « Un nouveau challenger arrive ! » en arrivant sur l'exo suivant (pas en revenant en arrière).
+  if (S.etape > avant) jouerSon("exo");
   sauver();
   rendre();
   window.scrollTo(0, 0);
