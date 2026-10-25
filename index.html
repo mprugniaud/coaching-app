@@ -3,18 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#09090b" id="couleur-barre">
+  <meta name="theme-color" content="#f4efe7" id="couleur-barre">
   <link rel="preload" href="fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
   <title>FLX Training</title>
   <script>
     // Thème appliqué avant l'affichage, pour éviter un flash de l'autre couleur.
-    try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) {}
+    // Préférence : "couloirs" (défaut, identité FLX Training), "dark" ou "auto" (sombre si le téléphone est en
+    // sombre, sinon couloirs). L'ancien "light" n'existe plus : il devient "couloirs".
+    function themePrefere() {
+      var p = "couloirs";
+      try { p = localStorage.getItem("theme") || "couloirs"; } catch (e) {}
+      return p === "light" ? "couloirs" : p;
+    }
+    function resoudreTheme(p) {
+      return p === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "couloirs") : p;
+    }
     function couleurBarre() {
       var t = document.documentElement.dataset.theme;
-      var clair = t === "light" || (t === "auto" && matchMedia("(prefers-color-scheme: light)").matches);
-      document.getElementById("couleur-barre").content = t === "couloirs" ? "#f4efe7" : clair ? "#fafafa" : "#09090b";
+      document.getElementById("couleur-barre").content = t === "couloirs" ? "#f4efe7" : "#09090b";
     }
+    document.documentElement.dataset.theme = resoudreTheme(themePrefere());
     couleurBarre();
+    // En « Auto », suivre le téléphone s'il change de mode pendant que l'app est ouverte.
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if (themePrefere() === "auto") { document.documentElement.dataset.theme = resoudreTheme("auto"); couleurBarre(); }
+    });
   </script>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">

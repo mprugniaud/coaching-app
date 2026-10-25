@@ -1420,14 +1420,17 @@ function vueRecap() {
     <div class="pied"><button class="btn lg success" data-a="enregistrer">${ic("envoi")}Enregistrer la séance</button></div>`;
 }
 
-/** Thème : "dark" (défaut), "light", "auto" (suit le téléphone) ou "couloirs" (identité de la landing). Préférence de cet appareil. */
+/**
+ * Thème, préférence de cet appareil : "couloirs" (Défaut, identité FLX Training), "dark" (Sombre) ou "auto"
+ * (sombre si le téléphone est en sombre, sinon Défaut). themePrefere / resoudreTheme sont dans index.html.
+ */
 function themeActuel() {
-  try { return localStorage.getItem("theme") || "dark"; } catch (err) { return "dark"; }
+  return window.themePrefere ? themePrefere() : "couloirs";
 }
 
 function appliquerTheme(t) {
-  document.documentElement.dataset.theme = t;
   try { localStorage.setItem("theme", t); } catch (err) {}
+  document.documentElement.dataset.theme = window.resoudreTheme ? resoudreTheme(t) : t;
   if (window.couleurBarre) couleurBarre();
 }
 
@@ -1435,7 +1438,7 @@ function vueReglages() {
   const c = etat.config;
   if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage("version");
   const theme = themeActuel();
-  const choix = [["dark", "Sombre"], ["light", "Clair"], ["auto", "Auto"], ["couloirs", "Couloirs"]]
+  const choix = [["couloirs", "Défaut"], ["dark", "Sombre"], ["auto", "Auto"]]
     .map(([v, l]) => `<button class="btn sm ${theme === v ? "" : "outline"}" data-a="theme" data-theme="${v}">${l}</button>`).join("");
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => {
@@ -1447,7 +1450,7 @@ function vueReglages() {
     <div class="top"><h1>Réglages</h1></div>
     <div class="liste">
       <div class="item"><div class="grow"><p style="font-weight:500">Apparence</p>
-        <p class="xs muted">Auto suit le réglage du téléphone</p></div><div class="row">${choix}</div></div>
+        <p class="xs muted">Auto : sombre si ton téléphone est en mode sombre</p></div><div class="row">${choix}</div></div>
       <div class="item"><div class="grow"><p style="font-weight:500">Lien perso</p>
         <p class="xs muted trunc">${c.demo ? "Démo" : esc(c.url.replace(/^https:\/\//, "")) + "?cle=" + esc(c.cle.slice(0, 4)) + "…"}</p></div>
         <button class="btn sm outline" data-a="changer-lien">${c.demo ? "Quitter la démo" : "Changer"}</button></div>

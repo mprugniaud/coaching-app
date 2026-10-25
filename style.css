@@ -1,8 +1,8 @@
 /*
  * « FLX Training » — design sobre façon shadcn/ui : palette zinc, bordures fines,
  * une seule couleur d'accent (l'orange du logo, texte marine dessus), vert pour ce qui est fait.
- * Sombre par défaut (la salle) ; clair, « Auto » ou « Couloirs » au choix dans les Réglages.
- * « Couloirs » = l'identité de la landing (piste ocre, bleu nuit, titres condensés Archivo).
+ * Thème par défaut « Couloirs » (Réglages : « Défaut ») = l'identité de la landing (crème, ocre, bleu nuit,
+ * titres condensés Archivo) ; « Sombre » = palette zinc ci-dessous (:root) ; « Auto » choisit l'un ou l'autre.
  */
 @font-face {
   font-family: "Inter";
@@ -34,52 +34,6 @@
   --shadow: 0 8px 30px rgba(0, 0, 0, .45);
   color-scheme: dark;
 }
-/* Thème clair : choisi dans les Réglages, ou « Auto » si le téléphone est en clair. */
-@media (prefers-color-scheme: light) {
-  :root[data-theme="auto"] {
-    --bg: #fafafa;
-    --card: #ffffff;
-    --muted: #f4f4f5;
-    --muted-2: #e4e4e7;
-    --border: #e4e4e7;
-    --fg: #09090b;
-    --fg-muted: #52525b;
-    --fg-subtle: #a1a1aa;
-    --primary: #18181b;
-    --primary-fg: #fafafa;
-    --accent: #ea580c;
-    --accent-fg: #ffffff;
-    --success: #16a34a;
-    --success-soft: rgba(22, 163, 74, .12);
-    --danger: #dc2626;
-    --danger-soft: rgba(220, 38, 38, .1);
-    --ring: rgba(9, 9, 11, .2);
-    --shadow: 0 8px 30px rgba(0, 0, 0, .12);
-    color-scheme: light;
-  }
-}
-:root[data-theme="light"] {
-  --bg: #fafafa;
-  --card: #ffffff;
-  --muted: #f4f4f5;
-  --muted-2: #e4e4e7;
-  --border: #e4e4e7;
-  --fg: #09090b;
-  --fg-muted: #52525b;
-  --fg-subtle: #a1a1aa;
-  --primary: #18181b;
-  --primary-fg: #fafafa;
-  --accent: #ea580c;
-  --accent-fg: #ffffff;
-  --success: #16a34a;
-  --success-soft: rgba(22, 163, 74, .12);
-  --danger: #dc2626;
-  --danger-soft: rgba(220, 38, 38, .1);
-  --ring: rgba(9, 9, 11, .2);
-  --shadow: 0 8px 30px rgba(0, 0, 0, .12);
-  color-scheme: light;
-}
-
 /* Thème « Couloirs » : fond crème de la landing, accent ocre, texte bleu nuit. */
 @font-face {
   font-family: "Archivo";
@@ -316,10 +270,6 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 .txt-rpe-modere { color: var(--rpe-modere); }
 .txt-rpe-dur { color: var(--rpe-dur); }
 .txt-rpe-max { color: var(--rpe-max); }
-:root[data-theme="light"] { --rpe-facile: #16a34a; --rpe-modere: #a16207; --rpe-dur: #c2410c; --rpe-max: #dc2626; }
-@media (prefers-color-scheme: light) {
-  :root[data-theme="auto"] { --rpe-facile: #16a34a; --rpe-modere: #a16207; --rpe-dur: #c2410c; --rpe-max: #dc2626; }
-}
 .recap .comm { font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
 .vide-etat { text-align: center; padding: 32px 16px; color: var(--fg-muted); }
 
@@ -351,7 +301,6 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 
 /* Zones ACWR : vert optimal, bleu sous-charge, orange vigilance, rouge pic. */
 :root { --zone-bas: #60a5fa; }
-:root[data-theme="light"] { --zone-bas: #2563eb; }
 .badge.zone-ok { color: var(--rpe-facile); background: rgba(34, 197, 94, .14); border-color: transparent; }
 .badge.zone-bas { color: var(--zone-bas); background: rgba(59, 130, 246, .15); border-color: transparent; }
 .badge.zone-vigilance { color: var(--rpe-dur); background: rgba(249, 115, 22, .15); border-color: transparent; }
