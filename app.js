@@ -83,7 +83,8 @@ const ICONES = {
   historique: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   envoi: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
   charge: '<line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/>',
-  crayon: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'
+  crayon: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+  aide: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'
 };
 /** Logo FLX (même dessin que app/icon.svg), en ligne pour marcher hors réseau. */
 const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" fill="#ff6b1a"/>' +
@@ -180,8 +181,11 @@ async function demarrer() {
       if (avaitUnSW && etat.vue !== "seance" && etat.vue !== "recap") location.reload();
     });
     navigator.serviceWorker.addEventListener("message", (e) => {
+      // Le service worker a vidé la file (Background Sync) : la page n'en sait
+      // rien sinon, et la charge affichée resterait l'ancienne.
+      if (e.data && e.data.envoyes) { apresEnvoi(); return; }
       if (e.data && e.data.version) {
-        etat.versionApp = e.data.version.replace("ma-seance-", "");
+        etat.versionApp = e.data.version.replace("flx-", "");
         const el = document.getElementById("version");
         if (el) el.textContent = etat.versionApp;
       }
@@ -313,7 +317,16 @@ async function synchroniser() {
           " dans ta feuille" + (ignores.length ? " — non retrouvés : " + ignores.join(", ") : ""), 5000);
   }
   if (etat.envois.some((e) => !e.refuse)) syncArrierePlan();
-  if (bilan && bilan.envoyes) majCharge(true);
+  // Charge relue AVANT de redessiner : sinon la séance quitte « À envoyer »
+  // sans être encore comptée dans la semaine.
+  if (bilan && bilan.envoyes) await majCharge(true);
+  if (["accueil", "semaine", "charge"].includes(etat.vue)) rendre(); else rendreStatut();
+}
+
+/** Envoi fait par le service worker : on relit la file et la charge. */
+async function apresEnvoi() {
+  await rafraichirLocaux();
+  await majCharge(true);
   if (["accueil", "semaine", "charge"].includes(etat.vue)) rendre(); else rendreStatut();
 }
 
@@ -432,7 +445,7 @@ async function majCharge(silencieux) {
     if (c.demo) {
       rep = JSON.parse(JSON.stringify(CHARGE_DEMO));
     } else {
-      const r = await fetch(c.url + "?api=charge&cle=" + encodeURIComponent(c.cle));
+      const r = await fetch(c.url + "?api=charge&cle=" + encodeURIComponent(c.cle) + "&t=" + Date.now(), { cache: "no-store" });
       rep = await r.json();
     }
     if (!rep.ok) throw new Error(rep.erreur || "réponse inattendue");
@@ -765,8 +778,7 @@ async function enregistrerSeance() {
   await rafraichirLocaux();
   allerA("semaine");
   toast(etat.enLigne ? "Séance enregistrée, envoi en cours…" : "Séance enregistrée. Envoi dès que le réseau revient.", 4000);
-  synchroniser();
-  syncArrierePlan();
+  synchroniser();               // programme lui-même le Background Sync s'il reste des envois
 }
 
 
@@ -955,7 +967,7 @@ async function garderEcran(actif) {
 
 function rendre() {
   const vues = { config: vueConfig, accueil: vueAccueil, semaine: vueSemaine, apercu: vueApercu,
-                 charge: vueCharge, declarer: vueDeclarer, programmee: vueProgrammee,
+                 charge: vueCharge, declarer: vueDeclarer, programmee: vueProgrammee, aideCharge: vueAideCharge,
                  seance: vueSeance, recap: vueRecap, reglages: vueReglages };
   // « FLX TRAINING » en haut de chaque écran ; la séance l'a dans sa barre fixe,
   // l'écran de bienvenue a le grand logo.
@@ -1477,7 +1489,8 @@ const envoisCharge = (action) => etat.envois.filter((e) => e.action === action &
 
 function vueCharge() {
   const C = etat.charge;
-  let h = `<div class="top"><div><p class="muted sm">Suivi de fatigue</p><h1>Ta charge</h1></div>${statut()}</div>`;
+  let h = `<div class="top"><div><p class="muted sm">Suivi de fatigue</p>
+      <h1 class="row">Ta charge<button class="btn icon plain" data-a="aide-charge" aria-label="Comment ça marche ?">${ic("aide")}</button></h1></div>${statut()}</div>`;
   if (!C) {
     return h + `<div class="card vide-etat stack"><p>Ta charge n'est pas encore sur le téléphone.</p>
       ${boutonActualiser("Télécharger")}</div>` + onglets("charge");
@@ -1487,7 +1500,13 @@ function vueCharge() {
       <p class="muted sm">Le suivi de charge n'est pas installé dans ta feuille. Demande à Félix de l'activer.</p></div>`;
   }
 
-  const sem = C.semaines;
+  // Séances déclarées pas encore envoyées : comptées tout de suite dans la
+  // semaine en cours (copie, le serveur fera foi au prochain rafraîchissement).
+  const sem = C.semaines.map((w) => Object.assign({}, w));
+  envoisCharge("declarer").forEach((e) => {
+    const x = e.donnees.seance;
+    if (sem[0] && x.date >= sem[0].lundi) { sem[0].charge = (sem[0].charge || 0) + x.duree * x.rpe; sem[0].nbSeances++; }
+  });
   const a = C.analyse;
   const zone = ZONES[a.alerte] || ["zone-neutre", ""];
   const acwr = a.acwr === null ? "—" : fmtNum(a.acwr);
@@ -1498,7 +1517,8 @@ function vueCharge() {
     <div class="card stack"><div class="row between"><h3>${esc(a.alerte)}</h3><span class="badge ${zone[0]}"><span class="dot"></span>${acwr === "—" ? "—" : "ACWR " + acwr}</span></div>
       <p class="sm muted">${esc(zone[1])}</p>
       ${graphiqueCharge(sem, a.chronique)}
-      <p class="xs subtle">Charge = durée (min) × RPE. ACWR = semaine dernière ÷ moyenne des 4 semaines d'avant.</p></div>
+      <p class="xs subtle">Charge = durée (min) × RPE. ACWR = semaine dernière ÷ moyenne des 4 semaines d'avant.
+        <button class="lien-txt" data-a="aide-charge">Comment ça marche ?</button></p></div>
     <button class="btn block lg mt" data-a="declarer">${ic("plus")}Déclarer une séance</button>`;
 
   // Séances programmées de la semaine (durée et date modifiables)
@@ -1598,6 +1618,39 @@ function vueDeclarer() {
     <div class="pied"><button class="btn lg" data-a="declarer-ok">${ic("check")}Enregistrer</button></div>`;
 }
 
+/** « ? » de l'onglet Charge : le principe du suivi de fatigue, sans jargon. */
+function vueAideCharge() {
+  const s = (etat.charge && etat.charge.seuils) || { bas: 0.8, haut: 1.3, danger: 1.5 };
+  return `<button class="back" data-a="retour">${ic("gauche", "sm")}Charge</button>
+    <div class="top"><div><p class="muted sm">Suivi de fatigue</p><h1>Comment ça marche ?</h1></div></div>
+    <div class="card stack aide">
+      <h3>1. Chaque séance a une charge</h3>
+      <p class="sm muted">Après une séance, tu notes ton <b>RPE</b> : ton ressenti d'effort de 1 (très facile) à 10 (impossible d'en faire plus).
+        La charge, c'est <b>durée × RPE</b>. 60 min à RPE 7 = <b>420</b>. Une séance longue et facile peut donc peser autant qu'une courte et dure.</p>
+    </div>
+    <div class="card stack aide">
+      <h3>2. Tout compte, pas seulement la muscu</h3>
+      <p class="sm muted">Les séances de Félix arrivent toutes seules. Un match, un entraînement de club, un footing ?
+        Déclare-le avec <b>Déclarer une séance</b> : ton corps, lui, fait le total de tout.</p>
+    </div>
+    <div class="card stack aide">
+      <h3>3. On compare à tes habitudes</h3>
+      <p class="sm muted">L'<b>ACWR</b> compare ta charge de la semaine dernière à la moyenne des 4 semaines d'avant.
+        Le corps encaisse bien ce à quoi il est habitué ; ce qui blesse, c'est surtout une <b>hausse brutale</b>.</p>
+      <div class="liste">
+        <div class="item"><span class="badge zone-bas"><span class="dot"></span>moins de ${fmtNum(s.bas)}</span><span class="sm grow">Sous-charge : récup, ou reprise en douceur.</span></div>
+        <div class="item"><span class="badge zone-ok"><span class="dot"></span>${fmtNum(s.bas)} à ${fmtNum(s.haut)}</span><span class="sm grow">Zone optimale : tu progresses sans trop tirer.</span></div>
+        <div class="item"><span class="badge zone-vigilance"><span class="dot"></span>${fmtNum(s.haut)} à ${fmtNum(s.danger)}</span><span class="sm grow">Ça monte vite : lève un peu le pied.</span></div>
+        <div class="item"><span class="badge zone-pic"><span class="dot"></span>plus de ${fmtNum(s.danger)}</span><span class="sm grow">Pic : risque de blessure, parles-en à Félix.</span></div>
+      </div>
+    </div>
+    <div class="card stack aide">
+      <h3>Bon à savoir</h3>
+      <p class="sm muted">Il faut au moins 2 semaines d'historique pour calculer l'ACWR. C'est un repère, pas un verdict :
+        fatigue, sommeil et douleurs comptent aussi, et Félix voit les mêmes chiffres que toi.</p>
+    </div>`;
+}
+
 function vueProgrammee() {
   const e = etat.progEdit;
   if (!e) return vueCharge();
@@ -1667,8 +1720,7 @@ async function envoyerCharge(action, donnees, resume) {
   const id = uuid();
   await envoiMettre({ id: id, action: action, donnees: Object.assign({ id: id }, donnees), resume: resume, cree: Date.now(), essais: 0 });
   await rafraichirLocaux();
-  synchroniser();
-  syncArrierePlan();
+  synchroniser();               // programme lui-même le Background Sync s'il reste des envois
 }
 
 
@@ -1743,6 +1795,7 @@ const actions = {
   },
   // Suivi de charge
   "onglet-seances": () => allerA("accueil"),
+  "aide-charge": () => naviguer("aideCharge"),
   "onglet-charge": () => { naviguer("charge"); if (etat.enLigne && !etat.charge) majCharge(false); },
 
   "declarer": () => {

@@ -3,9 +3,11 @@
  * des séances part dès que le réseau revient, même l'app fermée
  * (Background Sync, Chrome Android).
  * ⚠ Changer VERSION à chaque modification d'un fichier de l'app, sinon le
- *   téléphone garde l'ancienne version en cache.
+ *   téléphone garde l'ancienne version en cache. Format flx-v1.X.Y (= tag
+ *   GitHub vX.Y.Z du dépôt) : correctif → Y+1 ; nouvelle fonction → X+1, Y=0 ;
+ *   gros changement → 2.0.0. (Avant le 2026-10-25 : ma-seance-v1…v20 = v1.0.0.)
  */
-const VERSION = "ma-seance-v20";
+const VERSION = "flx-v1.1.0";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "db.js", "sync.js", "demo.js",
   "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon.svg", "favicon-32.png",
@@ -56,7 +58,13 @@ self.addEventListener("message", function (e) {
 self.addEventListener("sync", function (e) {
   if (e.tag !== "envois") return;
   // Échouer tant qu'il reste des envois : Android reprogramme alors la synchro.
-  e.waitUntil(envoyerFile().then(envoisTous).then(function (reste) {
+  e.waitUntil(envoyerFile().then(function (bilan) {
+    // Page ouverte : elle relit la charge (sinon elle afficherait l'ancienne).
+    if (bilan.envoyes) {
+      self.clients.matchAll().then((cl) => cl.forEach((c) => c.postMessage({ envoyes: bilan.envoyes })));
+    }
+    return envoisTous();
+  }).then(function (reste) {
     if (reste.some((x) => !x.refuse)) throw new Error("Envois en attente : nouvel essai plus tard");
   }));
 });
