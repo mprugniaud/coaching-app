@@ -12,7 +12,7 @@
     function couleurBarre() {
       var t = document.documentElement.dataset.theme;
       var clair = t === "light" || (t === "auto" && matchMedia("(prefers-color-scheme: light)").matches);
-      document.getElementById("couleur-barre").content = clair ? "#fafafa" : "#09090b";
+      document.getElementById("couleur-barre").content = t === "couloirs" ? "#f4efe7" : clair ? "#fafafa" : "#09090b";
     }
     couleurBarre();
   </script>

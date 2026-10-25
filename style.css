@@ -1,7 +1,8 @@
 /*
  * « FLX Training » — design sobre façon shadcn/ui : palette zinc, bordures fines,
  * une seule couleur d'accent (l'orange du logo, texte marine dessus), vert pour ce qui est fait.
- * Sombre par défaut (la salle) ; clair ou « Auto » au choix dans les Réglages.
+ * Sombre par défaut (la salle) ; clair, « Auto » ou « Couloirs » au choix dans les Réglages.
+ * « Couloirs » = l'identité de la landing (piste ocre, bleu nuit, titres condensés Archivo).
  */
 @font-face {
   font-family: "Inter";
@@ -78,6 +79,52 @@
   --shadow: 0 8px 30px rgba(0, 0, 0, .12);
   color-scheme: light;
 }
+
+/* Thème « Couloirs » : fond crème de la landing, accent ocre, texte bleu nuit. */
+@font-face {
+  font-family: "Archivo";
+  src: url("fonts/archivo.woff2") format("woff2");
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+}
+:root[data-theme="couloirs"] {
+  --bg: #f4efe7;
+  --card: #ffffff;
+  --muted: #ece5da;
+  --muted-2: #e0d6c7;
+  --border: #e0d6c7;
+  --fg: #17213a;
+  --fg-muted: #5b6275;
+  --fg-subtle: #8a8f9c;
+  --primary: #17213a;
+  --primary-fg: #f4efe7;
+  --accent: #c4462c;
+  --accent-fg: #ffffff;
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, .12);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, .1);
+  --ring: rgba(23, 33, 58, .25);
+  --shadow: 0 8px 30px rgba(23, 33, 58, .12);
+  --rpe-facile: #16a34a; --rpe-modere: #a16207; --rpe-dur: #c2410c; --rpe-max: #dc2626;
+  --zone-bas: #2563eb;
+  color-scheme: light;
+}
+/* Titres condensés en majuscules, comme sur la landing. */
+:root[data-theme="couloirs"] h1,
+:root[data-theme="couloirs"] h2,
+:root[data-theme="couloirs"] .barre-seance .titre b {
+  font-family: "Archivo", "Inter", system-ui, sans-serif; font-stretch: 62%; font-weight: 900;
+  text-transform: uppercase; letter-spacing: 0;
+}
+:root[data-theme="couloirs"] h1 { font-size: 34px; line-height: 1; }
+:root[data-theme="couloirs"] .barre-seance .titre b { font-size: 20px; }
+:root[data-theme="couloirs"] h2 { font-size: 17px; color: var(--fg); }
+:root[data-theme="couloirs"] .exo-titre h2 { font-size: 30px; line-height: 1; }
+/* Teintes ocre au lieu de l'orange d'origine (pastille d'accent, carte « Prochaine séance »). */
+:root[data-theme="couloirs"] .badge.accent { background: rgba(196, 70, 44, .12); }
+:root[data-theme="couloirs"] .hero { border-color: rgba(196, 70, 44, .45); background: linear-gradient(140deg, rgba(196, 70, 44, .10), rgba(196, 70, 44, 0) 55%), var(--card); }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--fg); }

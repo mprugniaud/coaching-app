@@ -7,11 +7,11 @@
  *   GitHub vX.Y.Z du dépôt) : correctif → Y+1 ; nouvelle fonction → X+1, Y=0 ;
  *   gros changement → 2.0.0. (Avant le 2026-10-25 : ma-seance-v1…v20 = v1.0.0.)
  */
-const VERSION = "flx-v1.2.0";
+const VERSION = "flx-v1.3.0";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "db.js", "sync.js", "demo.js",
   "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon.svg", "favicon-32.png",
-  "apple-touch-icon.png", "fonts/inter.woff2"
+  "apple-touch-icon.png", "fonts/inter.woff2", "fonts/archivo.woff2"
 ];
 
 importScripts("db.js", "sync.js");

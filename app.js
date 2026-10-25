@@ -1420,7 +1420,7 @@ function vueRecap() {
     <div class="pied"><button class="btn lg success" data-a="enregistrer">${ic("envoi")}Enregistrer la séance</button></div>`;
 }
 
-/** Thème : "dark" (défaut), "light" ou "auto" (suit le téléphone). Préférence de cet appareil. */
+/** Thème : "dark" (défaut), "light", "auto" (suit le téléphone) ou "couloirs" (identité de la landing). Préférence de cet appareil. */
 function themeActuel() {
   try { return localStorage.getItem("theme") || "dark"; } catch (err) { return "dark"; }
 }
@@ -1435,7 +1435,7 @@ function vueReglages() {
   const c = etat.config;
   if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage("version");
   const theme = themeActuel();
-  const choix = [["dark", "Sombre"], ["light", "Clair"], ["auto", "Auto"]]
+  const choix = [["dark", "Sombre"], ["light", "Clair"], ["auto", "Auto"], ["couloirs", "Couloirs"]]
     .map(([v, l]) => `<button class="btn sm ${theme === v ? "" : "outline"}" data-a="theme" data-theme="${v}">${l}</button>`).join("");
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => {
