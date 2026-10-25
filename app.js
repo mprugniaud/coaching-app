@@ -86,12 +86,8 @@ const ICONES = {
   crayon: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   aide: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'
 };
-/** Logo FLX (même dessin que app/icon.svg), en ligne pour marcher hors réseau. */
-const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" fill="#ff6b1a"/>' +
-  '<g transform="translate(56 184) scale(1.42) skewX(-12)" fill="#0b1f4d"><rect x="20" width="22" height="100"/>' +
-  '<rect x="20" width="68" height="22"/><rect x="20" y="40" width="56" height="20"/><rect x="104" width="22" height="100"/>' +
-  '<rect x="104" y="78" width="64" height="22"/><polygon points="182,0 207,0 262,100 237,100"/>' +
-  '<polygon points="240,0 268,0 248,38 266,38 204,104 222,56 202,56"/></g></svg>';
+/** Logo FLX Training (même dessin que app/icon.svg : direction « Couloirs »), en ligne pour marcher hors réseau. */
+const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" fill="#c4462c"/><g fill="#ffffff" opacity=".9"><rect x="35" width="10" height="512"/><rect x="155" width="10" height="512"/><rect x="347" width="10" height="512"/><rect x="467" width="10" height="512"/></g><rect x="64" y="92" width="386" height="252" fill="#c4462c"/><g fill="#ffffff"><rect x="78" y="110" width="52" height="220"/><rect x="78" y="110" width="100" height="46"/><rect x="78" y="200" width="88" height="42"/><rect x="196" y="110" width="52" height="220"/><rect x="196" y="284" width="96" height="46"/><polygon points="304,110 358,110 436,330 382,330"/><polygon points="382,110 436,110 358,330 304,330"/></g><rect x="96" y="372" width="320" height="44" fill="#17213a"/></svg>';
 const marque = () => `<div class="marque">${LOGO_SVG}FLX TRAINING</div>`;
 
 const ic = (nom, cls) => `<svg class="i ${cls || ""}" viewBox="0 0 24 24" aria-hidden="true">${ICONES[nom]}</svg>`;

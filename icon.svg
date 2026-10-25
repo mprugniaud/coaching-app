@@ -1,5 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- FLX Training — icône. Fond orange, FLX inclinés en marine, le X est un trait + un éclair. -->
-  <rect width="512" height="512" fill="#ff6b1a"/>
-  <g transform="translate(56 184) scale(1.42) skewX(-12)"><g fill="#0b1f4d"><rect x="20" y="0" width="22" height="100"/><rect x="20" y="0" width="68" height="22"/><rect x="20" y="40" width="56" height="20"/><rect x="104" y="0" width="22" height="100"/><rect x="104" y="78" width="64" height="22"/><polygon points="182,0 207,0 262,100 237,100"/></g><polygon fill="#0b1f4d" points="240,0 268,0 248,38 266,38 204,104 222,56 202,56"/></g>
+  <!-- FLX Training — icône, direction « Couloirs » (comme le favicon de la landing) : piste ocre, couloirs blancs,
+       FLX condensé en blanc dessiné en formes (aucune police, marche hors réseau), barre bleu nuit de « TRAINING ». -->
+  <rect width="512" height="512" fill="#c4462c"/>
+  <g fill="#ffffff" opacity=".9"><rect x="35" width="10" height="512"/><rect x="155" width="10" height="512"/><rect x="347" width="10" height="512"/><rect x="467" width="10" height="512"/></g>
+  <rect x="64" y="92" width="386" height="252" fill="#c4462c"/>
+  <g fill="#ffffff">
+    <rect x="78" y="110" width="52" height="220"/><rect x="78" y="110" width="100" height="46"/><rect x="78" y="200" width="88" height="42"/>
+    <rect x="196" y="110" width="52" height="220"/><rect x="196" y="284" width="96" height="46"/>
+    <polygon points="304,110 358,110 436,330 382,330"/><polygon points="382,110 436,110 358,330 304,330"/>
+  </g>
+  <rect x="96" y="372" width="320" height="44" fill="#17213a"/>
 </svg>
