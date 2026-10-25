@@ -52,6 +52,7 @@ const etat = {
   form: null,          // séance en cours de déclaration
   progEdit: null,      // séance programmée en cours de modification
   videoEls: {},        // yt → <video>, gardées d'un rendu à l'autre
+  sons: true,          // bande-son de la séance (réglage, kv « sons »)
   enLigne: navigator.onLine,
   installer: null      // proposition d'installation de Chrome (beforeinstallprompt)
 };
@@ -193,6 +194,7 @@ async function demarrer() {
   etat.seance = await kvGet("encours");
   etat.historique = (await kvGet("historique")) || {};
   etat.charge = (await kvGet("charge")) || null;
+  etat.sons = (await kvGet("sons")) !== false;
   if (etat.seance && etat.seance.v !== VERSION_SEANCE) {
     etat.seance = null;                    // séance d'une version précédente de l'app
     await kvDel("encours");
@@ -210,6 +212,7 @@ async function demarrer() {
     if (navigator.onLine) {
       majProgramme(true).then(preparerSemaineEnCours);
       majCharge(true);
+      telechargerSons();
     }
   }
   setInterval(tic, 1000);
@@ -631,7 +634,8 @@ function apresSerie(s) {
   if (!tourFini) return;
   const reste = groupe.some((x) => x.sets.some((se) => !se.fait));
   const derniere = S.etape === S.etapes.length - 1;
-  if (!reste && derniere) { finRepos(); return; }
+  if (!reste && derniere) { finRepos(); sonFinSeance(); return; }
+  if (!reste) jouerSon("exo");   // exo (ou enchaînement) terminé
 
   const sec = Math.max(0, ...groupe.map((x) => x.recupSec || 0));
   if (!sec) return;
@@ -701,6 +705,7 @@ function commencer(ref) {
   etat.commentaires = {};
   sauver();
   activerSon();
+  preparerSons().then(() => jouerSon("debut"));
   naviguer("seance");
   if (etat.enLigne) preparerHorsLigne(ref, [ref], true);
 }
@@ -802,10 +807,19 @@ function afficherRepos() {
     const resteMs = R.fin - Date.now();
     const reste = Math.ceil(resteMs / 1000);
     $p.setAttribute("stroke-dashoffset", String(C * (1 - Math.max(0, resteMs) / (R.total * 1000))));
-    if (reste > 0) { $t.textContent = mmss(reste); $repos.classList.remove("fini"); return; }
+    if (reste > 0) {
+      $t.textContent = mmss(reste); $repos.classList.remove("fini");
+      // Le « 3, 2, 1 » part au bon moment pour que le GO tombe pile à zéro.
+      if (!R.decompte && resteMs <= SONS.go.go * 1000) {
+        R.decompte = true;
+        sonDecompte = jouerSon("go", SONS.go.go - resteMs / 1000);
+        R.avecSon = !!sonDecompte;
+      }
+      return;
+    }
     $t.textContent = "Go";
     $repos.classList.add("fini");
-    if (!R.sonne) { R.sonne = true; sauver(); signalFin(); }
+    if (!R.sonne) { R.sonne = true; sauver(); signalFin(R.avecSon); }
     if (reste < -8) finRepos();
   };
   maj();
@@ -814,6 +828,7 @@ function afficherRepos() {
 
 function finRepos() {
   clearInterval(minuteurRepos);
+  couperDecompte();
   if (etat.seance && etat.seance.repos) { etat.seance.repos = null; sauver(); }
   $repos.hidden = true;
   document.body.classList.remove("avec-repos");
@@ -824,12 +839,14 @@ function activerSon() {
   try {
     if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
     if (audio.state === "suspended") audio.resume();
+    preparerSons();
   } catch (err) { audio = null; }
 }
 
-function signalFin() {
+/** Fin de récup : vibration, et les bips si le « GO » de la bande-son n'a pas joué. */
+function signalFin(avecSon) {
   if (navigator.vibrate) navigator.vibrate([400, 150, 400, 150, 400]);
-  if (!audio) return;
+  if (!audio || avecSon) return;
   [0, 0.35, 0.7].forEach((d) => {
     const o = audio.createOscillator();
     const g = audio.createGain();
@@ -840,6 +857,85 @@ function signalFin() {
     o.start(audio.currentTime + d);
     o.stop(audio.currentTime + d + 0.3);
   });
+}
+
+/* ------------------------------ Bande-son -------------------------------
+ * Choisie le 2026-10-25. Extraits YouTube déposés par `tools/videos_exos.py --sons`
+ * dans le dossier Drive privé des vidéos (usage perso : rien dans le dépôt public,
+ * qui est public), relus par ?api=video et gardés dans IndexedDB (kv « son-<yt> »).
+ * de / a : passage joué, en secondes. Son absent (démo, pas encore téléchargé) ou
+ * réglage coupé : rien, sauf les bips de fin de récup.
+ */
+const SONS = {
+  debut: { yt: "0e_-8ShpF1I", de: 1.1, a: 5.6 },            // « Let's get ready to rumble »
+  go:    { yt: "C8SFHfhmgDk", de: 0.85, a: 5.0, go: 3.05 }, // Smash Bros « 3, 2, 1, GO ! » (GO 3,05 s après « de »)
+  exo:   { yt: "CAIa0TbirAQ", de: 0, a: 2.6 },              // Smash Bros « Un nouveau challenger arrive ! »
+  fin:   { yt: "Y5H4Das52wk", de: 0.05, a: 4.4 }            // Fortnite « Victory Royale »
+};
+const tampons = {};    // moment → AudioBuffer décodé
+let sonDecompte = null; // « 3, 2, 1, GO » en cours, coupé si la récup change (Passer, ±15 s)
+
+/** Décode les sons déjà sur le téléphone (il faut l'AudioContext, donc un geste). */
+async function preparerSons() {
+  if (!audio) return;
+  for (const m of Object.keys(SONS)) {
+    if (tampons[m]) continue;
+    try {
+      const blob = await kvGet("son-" + SONS[m].yt);
+      if (blob) tampons[m] = await audio.decodeAudioData(await blob.arrayBuffer());
+    } catch (err) { /* illisible : on fera sans */ }
+  }
+}
+
+/** Avec du réseau : copie sur le téléphone les sons qui manquent. */
+async function telechargerSons() {
+  if (!etat.config || etat.config.demo) return;
+  for (const s of Object.values(SONS)) {
+    try {
+      if (await kvGet("son-" + s.yt)) continue;
+      const r = await fetch(etat.config.url + "?api=video&cle=" + encodeURIComponent(etat.config.cle) + "&yt=" + s.yt);
+      const rep = await r.json();
+      if (!rep.ok) continue;               // pas encore déposé dans le Drive
+      const blob = await (await fetch("data:audio/mp4;base64," + rep.base64)).blob();
+      await kvSet("son-" + s.yt, blob);
+    } catch (err) { /* réessayé au prochain lancement */ }
+  }
+  preparerSons();
+}
+
+/**
+ * Joue un moment de la bande-son. « position » : où commencer dans le passage (s),
+ * pour caler le compte à rebours. Renvoie la source, ou null si rien n'a joué.
+ */
+function jouerSon(moment, position) {
+  const s = SONS[moment], b = tampons[moment];
+  if (!etat.sons || !audio || !b) return null;
+  const de = s.de + Math.max(0, position || 0);
+  const duree = Math.min(s.a, b.duration) - de;
+  if (duree <= 0.05) return null;
+  const src = audio.createBufferSource();
+  src.buffer = b;
+  // Fondu de sortie : le passage est coupé au milieu d'un son, sans « clic ».
+  const g = audio.createGain(), t = audio.currentTime;
+  g.gain.setValueAtTime(1, t);
+  g.gain.setValueAtTime(1, t + Math.max(0, duree - 0.25));
+  g.gain.linearRampToValueAtTime(0.0001, t + duree);
+  src.connect(g); g.connect(audio.destination);
+  src.start(t, de, duree);
+  return src;
+}
+
+function couperDecompte() {
+  if (sonDecompte) { try { sonDecompte.stop(); } catch (err) { /* déjà fini */ } }
+  sonDecompte = null;
+}
+
+/** Une seule fois par séance : dernière série cochée, ou « Terminer ». */
+function sonFinSeance() {
+  const S = etat.seance;
+  if (!S || S.finJouee) return;
+  S.finJouee = true;
+  jouerSon("fin");
 }
 
 /** Écran allumé pendant la séance. */
@@ -1348,6 +1444,9 @@ function vueReglages() {
       <div class="item"><div class="grow"><p style="font-weight:500">Lien perso</p>
         <p class="xs muted trunc">${c.demo ? "Démo" : esc(c.url.replace(/^https:\/\//, "")) + "?cle=" + esc(c.cle.slice(0, 4)) + "…"}</p></div>
         <button class="btn sm outline" data-a="changer-lien">${c.demo ? "Quitter la démo" : "Changer"}</button></div>
+      <div class="item"><div class="grow"><p style="font-weight:500">Sons de séance</p>
+        <p class="xs muted">Ready to rumble, 3-2-1 GO, nouveau challenger, Victory Royale</p></div>
+        <button class="btn sm ${etat.sons ? "" : "outline"}" data-a="sons">${etat.sons ? "Activés" : "Coupés"}</button></div>
       <div class="item"><div class="grow"><p style="font-weight:500">Vidéos sur le téléphone : ${etat.videos.size}</p>
         <p class="xs muted" id="stockage"></p></div>
         <button class="btn sm danger" data-a="vider-videos" ${etat.videos.size ? "" : "disabled"}>Supprimer</button></div>
@@ -1700,6 +1799,12 @@ const actions = {
     toast("Séance modifiée.");
   },
   "theme": (d) => { appliquerTheme(d.theme); rendre(); },
+  "sons": async () => {
+    etat.sons = !etat.sons;
+    await kvSet("sons", etat.sons);
+    rendre();
+    if (etat.sons) { activerSon(); preparerSons().then(() => jouerSon("exo")); }   // un aperçu
+  },
   "commencer": (d) => commencer(d.ref),
   "reprendre": () => {
     activerSon();
@@ -1808,6 +1913,8 @@ const actions = {
   "suiv": () => changerEtape(1),
   "terminer": () => {
     finRepos();
+    sonFinSeance();
+    sauver();
     if (etat.menu !== null) { etat.menu = null; history.replaceState({ vue: "seance" }, ""); }
     naviguer("recap");
   },
@@ -1820,13 +1927,21 @@ const actions = {
   "enregistrer": () => enregistrerSeance(),
 
   // Minuteur
-  "repos-moins": () => { if (etat.seance.repos) { etat.seance.repos.fin -= 15000; sauver(); } },
+  // Le « 3, 2, 1 » déjà parti ne tomberait plus juste : on le coupe, il repartira à 3 s.
+  "repos-moins": () => {
+    const R = etat.seance.repos;
+    if (!R) return;
+    R.fin -= 15000;
+    couperDecompte(); R.decompte = false;
+    sauver();
+  },
   "repos-plus": () => {
     const R = etat.seance.repos;
     if (!R) return;
     R.fin = Math.max(R.fin, Date.now()) + 15000;
     R.total = Math.max(R.total, Math.ceil((R.fin - Date.now()) / 1000));
     R.sonne = false;
+    couperDecompte(); R.decompte = false;
     sauver();
   },
   "repos-fin": () => finRepos()
