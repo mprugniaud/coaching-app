@@ -142,6 +142,40 @@ function nomSemaine(onglet) {
   return m ? { titre: m[1], dates: m[2].replace(/\s*-\s*/, " – ") } : { titre: onglet, dates: "" };
 }
 
+/** Date locale → « aaaa-mm-jj » (comparable en texte). */
+const isoJour = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+
+/** Lundi (« aaaa-mm-jj ») de la semaine d'une date. Midi : à l'abri des changements d'heure. */
+function lundiIso(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+  x.setDate(x.getDate() - (x.getDay() + 6) % 7);
+  return isoJour(x);
+}
+
+/**
+ * Où tombe un onglet semaine par rapport à aujourd'hui, d'après le « (jj/mm »
+ * de son nom (même règle que lundiDepuisNom_ de CoachLib : l'année la plus
+ * proche) : "courante", "passee" ou "future". Sans date dans le nom :
+ * "courante" (c'est la convention : le premier onglet = la semaine en cours).
+ * Sert quand le lundi arrive avant le programme de Félix : le premier onglet
+ * est alors encore celui de la semaine dernière.
+ */
+function quandSemaine(onglet) {
+  const m = /\((\d{1,2})\/(\d{1,2})/.exec(onglet || "");
+  if (!m) return "courante";
+  const auj = new Date();
+  let d = null;
+  [-1, 0, 1].forEach((dy) => {
+    const x = new Date(auj.getFullYear() + dy, Number(m[2]) - 1, Number(m[1]), 12);
+    if (!d || Math.abs(x - auj) < Math.abs(d - auj)) d = x;
+  });
+  const l = lundiIso(d), ici = lundiIso(auj);
+  return l === ici ? "courante" : l < ici ? "passee" : "future";
+}
+
+/** Lundi « aaaa-mm-jj » → « 19/10 ». */
+const jjmm = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+
 /** Poids prévu, en kg, lu dans la charge de Félix : « Barre +27,5 kg » → 27,5. */
 function poidsPrevu(charge) {
   const m = /(\d+(?:[.,]\d+)?)\s*kg/i.exec(charge || "");
@@ -1041,13 +1075,15 @@ function vueAccueil() {
   h += carteProchaine() + tuilesSemaine();
 
   // Toutes les semaines, en liste compacte
+  const BADGES_SEMAINE = { courante: "Cette semaine", future: "Semaine prochaine", passee: "Semaine dernière" };
   h += `<h2>Programme</h2><div class="liste">` + semaines().map((sem, k) => {
     const n = nomSemaine(sem.onglet);
+    const badge = k === 0 ? BADGES_SEMAINE[quandSemaine(sem.onglet)] : "";
     const faites = sem.seances.filter(seanceFaite).length;
     const total = sem.seances.length;
     return `<div class="item click" data-a="semaine" data-id="${sem.sheetId}">
       <div class="tile ${total && faites === total ? "ok" : ""}">${ic(total && faites === total ? "check" : "calendrier")}</div>
-      <div class="grow"><div class="row"><p style="font-weight:600">${esc(n.titre)}</p>${k === 0 ? '<span class="badge accent">Cette semaine</span>' : ""}</div>
+      <div class="grow"><div class="row"><p style="font-weight:600">${esc(n.titre)}</p>${badge ? `<span class="badge ${badge === "Cette semaine" ? "accent" : ""}">${badge}</span>` : ""}</div>
         <p class="xs muted">${esc(n.dates)}${n.dates ? " · " : ""}${faites}/${total} faite${faites > 1 ? "s" : ""}</p></div>
       ${ic("droite")}</div>`;
   }).join("") + `</div>`;
@@ -1087,6 +1123,16 @@ function carteProchaine() {
   }
   const faite = (x) => seanceFaite(x) || enAttente(x.ref) || !!etat.historique[x.ref];
   const s = sem.seances.find((x) => !faite(x));
+  // Nouvelle semaine, programme pas encore arrivé : le premier onglet est
+  // celui de la semaine dernière. On le dit, et on propose de rattraper.
+  const passee = quandSemaine(sem.onglet) === "passee";
+  if (passee && !s) {
+    return `<div class="hero"><span class="badge">${ic("calendrier", "sm")}Nouvelle semaine</span>
+      <h2 class="hero-titre">Programme pas encore arrivé</h2>
+      <p class="sm muted">Félix n'a pas encore posté le programme de cette semaine. Pense à actualiser plus tard.
+        Un match ou une course entre-temps ? Déclare-la dans l'onglet Charge.</p>
+      <div class="mt">${boutonActualiser("Actualiser")}</div></div>`;
+  }
   if (!s) {
     return `<div class="hero"><span class="badge ok">${ic("check", "sm")}Semaine terminée</span>
       <h2 class="hero-titre">Bien joué 💪</h2>
@@ -1100,11 +1146,12 @@ function carteProchaine() {
   const videos = !v.total ? "" : v.ici >= v.total ? `${ic("check", "sm")}Vidéos prêtes hors réseau`
     : tel ? `${ic("telecharger", "sm")}Vidéos en téléchargement ${v.ici}/${v.total}` : `${ic("sansvideo", "sm")}${v.total - v.ici} vidéo(s) à télécharger`;
   return `<div class="hero">
-    <div class="row between"><span class="badge accent">Prochaine séance</span>
-      <span class="xs muted">${esc(nomSemaine(sem.onglet).titre)}</span></div>
+    <div class="row between"><span class="badge accent">${passee ? "À rattraper" : "Prochaine séance"}</span>
+      <span class="xs muted">${esc(nomSemaine(sem.onglet).titre)}${passee ? " · semaine dernière" : ""}</span></div>
     <div class="row" style="margin-top:12px;gap:12px"><div class="tile hero-tile">${ic(s.type === "course" ? "course" : "haltere", "lg")}</div>
       <div class="grow"><h2 class="hero-titre" style="margin:0">${esc(s.titre)}</h2>
         <p class="sm muted">${s.type === "course" ? "Course" : "Salle"} · ${s.exos.length} exos · ${series} séries</p></div></div>
+    ${passee ? `<p class="xs muted" style="margin:12px 0 0">Le programme de cette semaine n'est pas encore arrivé : tu peux encore faire celle-ci.</p>` : ""}
     <p class="xs muted row" style="margin:12px 0 0">${videos}</p>
     <div class="row" style="margin-top:14px">
       <button class="btn lg grow hero-btn" data-a="commencer" data-ref="${esc(s.ref)}">Commencer</button>
@@ -1119,9 +1166,13 @@ function tuilesSemaine() {
   const total = sem.seances.length;
   const faites = sem.seances.filter((x) => seanceFaite(x) || enAttente(x.ref)).length;
   const points = sem.seances.map((x) => `<span class="point ${seanceFaite(x) || enAttente(x.ref) ? "on" : ""}"></span>`).join("");
-  let h = `<h2>Ta semaine</h2><div class="tuiles">
-    <div class="tuile click" data-a="semaine" data-id="${sem.sheetId}"><span class="xs muted">Séances</span>
-      <b class="tnum">${faites}<span class="muted">/${total}</span></b><div class="points">${points}</div></div>`;
+  // Semaine dernière encore en tête (programme pas arrivé) : pas de séances
+  // à compter cette semaine ; la tuile Charge, elle, est bien celle de la semaine.
+  let h = `<h2>Ta semaine</h2><div class="tuiles">` + (quandSemaine(sem.onglet) === "passee"
+    ? `<div class="tuile"><span class="xs muted">Séances</span>
+      <b class="tnum muted">—</b><span class="xs muted">programme à venir</span></div>`
+    : `<div class="tuile click" data-a="semaine" data-id="${sem.sheetId}"><span class="xs muted">Séances</span>
+      <b class="tnum">${faites}<span class="muted">/${total}</span></b><div class="points">${points}</div></div>`);
   const C = etat.charge;
   if (C && C.equipe) {
     const zone = ZONES[C.analyse.alerte] || ["zone-neutre", ""];
@@ -1524,7 +1575,19 @@ function vueCharge() {
   const enCours = envoisCharge("programmee").map((e) => e.donnees.ref);
   const prog = C.page.programmees || [];
   if (prog.length) {
-    h += `<h2>Séances programmées cette semaine</h2><div class="liste">` + prog.map((p) => {
+    // Ces séances sont celles du premier onglet semaine : le lundi, avant le
+    // programme de Félix, c'est encore la semaine dernière. Semaine lue dans le
+    // nom de l'onglet, sinon dans la date la plus ancienne (modifiable par l'élève).
+    const quand = C.page.semaine && /\(\d/.test(C.page.semaine) ? quandSemaine(C.page.semaine)
+      : (() => {
+        const l = lundiIso(new Date(prog.map((p) => p.date).filter(Boolean).sort()[0] + "T12:00")), ici = lundiIso(new Date());
+        return !/^\d{4}/.test(l) || l === ici ? "courante" : l < ici ? "passee" : "future";
+      })();
+    const titres = { courante: "Séances programmées cette semaine", passee: "Séances programmées la semaine dernière",
+                     future: "Séances programmées la semaine prochaine" };
+    h += `<h2>${titres[quand]}</h2>`;
+    if (quand === "passee") h += `<p class="xs muted" style="margin:-4px 0 8px">Le programme de cette semaine n'est pas encore arrivé.</p>`;
+    h += `<div class="liste">` + prog.map((p) => {
       const ch = p.rpe ? Math.round(p.duree * p.rpe) : null;
       return `<div class="item"><div class="grow"><p style="font-weight:500">${esc(p.titre)}</p>
         <p class="xs muted">${esc(jourCourt(p.date))} · ${esc(p.duree)} min${ch ? " · charge " + ch : " · pas encore faite"}</p></div>
