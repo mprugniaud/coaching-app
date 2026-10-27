@@ -92,6 +92,16 @@ const marque = () => `<div class="marque">${LOGO_SVG}FLX TRAINING</div>`;
 
 const ic = (nom, cls) => `<svg class="i ${cls || ""}" viewBox="0 0 24 24" aria-hidden="true">${ICONES[nom]}</svg>`;
 
+/**
+ * Anneau de progression (part des séances faites) : l'icône d'une semaine
+ * passée pas entièrement faite. Montre ce qui a été fait plutôt qu'un échec.
+ */
+function anneau(faites, total) {
+  const c = 2 * Math.PI * 9, part = total ? faites / total : 0;
+  return `<svg class="i anneau" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" class="fond"/>
+    ${part ? `<circle cx="12" cy="12" r="9" stroke-dasharray="${(c * part).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 12 12)"/>` : ""}</svg>`;
+}
+
 
 /* ================================ OUTILS ================================= */
 
@@ -173,8 +183,14 @@ function quandSemaine(onglet) {
   return l === ici ? "courante" : l < ici ? "passee" : "future";
 }
 
-/** Lundi « aaaa-mm-jj » → « 19/10 ». */
-const jjmm = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+/**
+ * Semaine terminée (dans le passé) ? D'après la date du nom ; sans date,
+ * tout onglet après le premier (convention : plus loin = plus ancien).
+ */
+function semainePassee(sem, k) {
+  return /\(\d/.test(sem.onglet || "") ? quandSemaine(sem.onglet) === "passee" : k > 0;
+}
+
 
 /** Poids prévu, en kg, lu dans la charge de Félix : « Barre +27,5 kg » → 27,5. */
 function poidsPrevu(charge) {
@@ -1081,8 +1097,11 @@ function vueAccueil() {
     const badge = k === 0 ? BADGES_SEMAINE[quandSemaine(sem.onglet)] : "";
     const faites = sem.seances.filter(seanceFaite).length;
     const total = sem.seances.length;
+    const tile = total && faites === total ? `<div class="tile ok">${ic("check")}</div>`
+      : semainePassee(sem, k) && total ? `<div class="tile passee">${anneau(faites, total)}</div>`
+      : `<div class="tile">${ic("calendrier")}</div>`;
     return `<div class="item click" data-a="semaine" data-id="${sem.sheetId}">
-      <div class="tile ${total && faites === total ? "ok" : ""}">${ic(total && faites === total ? "check" : "calendrier")}</div>
+      ${tile}
       <div class="grow"><div class="row"><p style="font-weight:600">${esc(n.titre)}</p>${badge ? `<span class="badge ${badge === "Cette semaine" ? "accent" : ""}">${badge}</span>` : ""}</div>
         <p class="xs muted">${esc(n.dates)}${n.dates ? " · " : ""}${faites}/${total} faite${faites > 1 ? "s" : ""}</p></div>
       ${ic("droite")}</div>`;
@@ -1220,6 +1239,7 @@ function vueSemaine() {
 
   h += `<h2>Séances</h2>`;
   if (!sem.seances.length) h += `<div class="card vide-etat">Aucune séance programmée.</div>`;
+  const passee = semainePassee(sem, semaines().indexOf(sem));
   sem.seances.forEach((s) => {
     const series = s.exos.reduce((a, x) => a + (x.nbSeries || 1), 0);
     const vs = videosDe([s]);
@@ -1228,6 +1248,7 @@ function vueSemaine() {
       encours ? '<span class="badge accent">En cours</span>' : "",
       seanceFaite(s) ? `<span class="badge ok">${ic("check", "sm")}Faite</span>` : "",
       enAttente(s.ref) ? '<span class="badge accent">À envoyer</span>' : "",
+      passee && !encours && !seanceFaite(s) && !enAttente(s.ref) ? '<span class="badge">Pas faite</span>' : "",
       vs.total && vs.ici < vs.total ? `<span class="badge">${ic("sansvideo", "sm")}${vs.total - vs.ici}</span>` : ""
     ].join("");
     h += `<div class="card click" data-a="ouvrir" data-ref="${esc(s.ref)}">
