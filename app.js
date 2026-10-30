@@ -42,6 +42,7 @@ const etat = {
   vue: "accueil",
   semaine: null,       // sheetId de la semaine affichée
   apercu: null,        // ref de la séance affichée avant de commencer
+  apercuExo: 0,        // exercice de cette séance vu en aperçu (indice)
   menu: null,          // menu ouvert : indice d'un exo, ou "seance"
   historique: {},      // ref → résumé des séances faites avec l'app (sur ce téléphone)
   commentaires: {},    // exos dont la zone de commentaire est dépliée
@@ -476,7 +477,7 @@ async function majProgramme(silencieux) {
     if (!silencieux) toast("Mise à jour impossible : " + err.message, 5000);
     return false;
   }
-  if (["accueil", "semaine", "apercu"].includes(etat.vue)) rendre();
+  if (["accueil", "semaine", "apercu", "apercuExo"].includes(etat.vue)) rendre();
   return true;
 }
 
@@ -839,10 +840,14 @@ function commencer(ref) {
   if (etat.enLigne) preparerHorsLigne(ref, [ref], true);
 }
 
-function sortirSeance() {
-  garderEcran(false);
+function libererVideos() {
   Object.values(etat.videoEls).forEach((v) => { v.pause(); URL.revokeObjectURL(v.src); });
   etat.videoEls = {};
+}
+
+function sortirSeance() {
+  garderEcran(false);
+  libererVideos();
   $repos.hidden = true;
   document.body.classList.remove("avec-repos");
   clearInterval(minuteurRepos);
@@ -1143,7 +1148,7 @@ async function garderEcran(actif) {
 /* ================================ RENDU ================================== */
 
 function rendre() {
-  const vues = { config: vueConfig, accueil: vueAccueil, semaine: vueSemaine, apercu: vueApercu,
+  const vues = { config: vueConfig, accueil: vueAccueil, semaine: vueSemaine, apercu: vueApercu, apercuExo: vueApercuExo,
                  charge: vueCharge, declarer: vueDeclarer, programmee: vueProgrammee, aideCharge: vueAideCharge,
                  seance: vueSeance, recap: vueRecap, reglages: vueReglages };
   // « FLX TRAINING » en haut de chaque écran ; la séance l'a dans sa barre fixe,
@@ -1158,6 +1163,9 @@ function rendre() {
   } else {
     $repos.hidden = true;
     document.body.classList.remove("avec-repos");
+    if (etat.vue === "apercuExo") brancherVideos();
+    // Le récap garde les vidéos de la séance, qu'on peut y retrouver.
+    else if (etat.vue !== "recap") libererVideos();
   }
 }
 
@@ -1422,7 +1430,7 @@ function vueApercu() {
       const fait = h ? (h.saute ? "Sauté" + (h.raison ? " — " + h.raison : "") : h.resume) : "";
       const comm = h ? h.commentaire : x.commentaire;
       const rpe = h ? (h.rpe || "") : x.rpe;
-      liste += `<div class="item"><span class="num">${n}</span>
+      liste += `<div class="item" style="cursor:pointer" data-a="voir-exo" data-i="${i}"><span class="num">${n}</span>
         <div class="grow"><p class="trunc" style="font-weight:500">${esc(x.nom)}</p><p class="xs muted">${esc(detail)}</p>
           ${fait ? `<p class="xs ${fait === "aucune série" ? "subtle" : ""}" style="margin-top:2px">${ic(fait === "aucune série" || (h && h.saute) ? "x" : "check", "sm")} ${esc(fait)}</p>` : ""}
           ${faite && comm ? `<p class="xs subtle" style="margin-top:2px">${esc(comm.indexOf("📱") === -1 && h ? "📱 " + comm : comm)}</p>` : ""}</div>
@@ -1456,6 +1464,30 @@ function vueApercu() {
       : `<button class="btn lg" data-a="commencer" data-ref="${esc(s.ref)}">Commencer la séance</button>`}</div>`;
 }
 
+/**
+ * Un exercice vu depuis le récap d'une séance, sans la commencer : ni chrono,
+ * ni écran gardé allumé, ni son, et une séance en cours n'est pas touchée.
+ */
+function vueApercuExo() {
+  const t = trouverSeance(etat.apercu);
+  const s = t && t.seance;
+  const x = s && s.exos[etat.apercuExo];
+  if (!x) return vueApercu();
+  const i = etat.apercuExo;
+  const etape = etapesDe(s.exos).find((e) => e.includes(i)) || [];
+  return `<button class="back" data-a="retour">${ic("gauche", "sm")}${esc(s.titre)}</button>
+    <div class="etape">Exercice ${i + 1} / ${s.exos.length}${etape.length > 1 ? ` <span class="badge accent">${etape.length === 2 ? "Superset" : "Circuit"}</span>` : ""}</div>
+    <div class="exo">${blocMedia(x)}
+      <div class="exo-titre"><h2>${esc(x.nom)}</h2></div>
+      <div class="chips">${chipsExo(x)}</div>
+      ${x.consigne ? `<p class="consigne">${esc(x.consigne)}</p>` : ""}
+      ${historiqueExo(x, t.semaine.onglet)}</div>
+    <div class="pied">
+      <button class="btn outline" data-a="apercu-exo-pas" data-v="-1" ${i ? "" : "disabled"}>${ic("gauche")}Précédent</button>
+      <button class="btn outline" data-a="apercu-exo-pas" data-v="1" ${i < s.exos.length - 1 ? "" : "disabled"}>Suivant${ic("droite")}</button>
+    </div>`;
+}
+
 function vueSeance() {
   const S = etat.seance;
   if (!S) return vueAccueil();
@@ -1482,6 +1514,33 @@ function vueSeance() {
     </div>`;
 }
 
+/** Vidéo d'un exercice, ou ce qu'on peut faire sans elle. Ne lit pas la séance en cours : sert aussi à l'aperçu. */
+function blocMedia(x) {
+  if (x.yt && etat.videos.has(x.yt)) return `<div class="media"><div class="vplace" data-yt="${esc(x.yt)}"></div></div>`;
+  if (!x.lien) return "";
+  const encours = etat.telechargements["v-" + x.yt];
+  let actions = "";
+  if (etat.enLigne && x.video) {
+    actions = `<button class="btn sm" data-a="video-une" data-yt="${esc(x.yt)}" ${encours ? "disabled" : ""}>${ic("telecharger", "sm")}${encours ? "Téléchargement…" : "Télécharger"}</button>`;
+  }
+  if (etat.enLigne) actions += `<a class="btn sm outline" href="${esc(x.lien)}" target="_blank" rel="noopener">${ic("lien", "sm")}En ligne</a>`;
+  const texte = !x.video ? "Vidéo pas encore dans le Drive" : etat.enLigne ? "Vidéo pas sur le téléphone" : "Vidéo pas téléchargée (pas de réseau)";
+  return `<div class="media"><div class="vide">${ic("sansvideo", "lg")}<span>${texte}</span>
+    ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`;
+}
+
+function chipsExo(x) {
+  return [x.charge, x.series && x.series + (Number(x.series) > 1 ? " séries" : " série"),
+          x.reps && (/^\d+$/.test(x.reps) ? x.reps + " reps" : x.reps), x.recup && x.recup !== "-" ? "récup " + x.recup : ""]
+    .filter(Boolean).map((t) => `<span class="badge">${esc(t)}</span>`).join("");
+}
+
+/** Ce que l'élève a fait la dernière fois sur cet exercice, dans une semaine plus ancienne. */
+function historiqueExo(x, onglet) {
+  const h = historique(x.nom, onglet);
+  return h ? `<p class="historique">${ic("historique", "sm")}${esc(h.semaine)} : ${esc([h.x.charge, h.x.reps && h.x.series + " × " + h.x.reps].filter(Boolean).join(" · "))}${rpeRempli(h.x.rpe) ? " · RPE " + esc(h.x.rpe) : ""}${h.x.commentaire ? " · « " + esc(h.x.commentaire) + " »" : ""}</p>` : "";
+}
+
 function carteExo(x, i, lettre) {
   const S = etat.seance;
   const titre = `<div class="exo-titre"><h2>${lettre ? `<span class="lettre">${lettre}</span>` : ""}${esc(x.nom)}</h2>
@@ -1492,26 +1551,9 @@ function carteExo(x, i, lettre) {
       <button class="btn sm outline" data-a="reprendre-exo" data-i="${i}">Je le fais</button></div></div>`;
   }
 
-  let media;
-  if (x.yt && etat.videos.has(x.yt)) media = `<div class="media"><div class="vplace" data-yt="${esc(x.yt)}"></div></div>`;
-  else if (x.lien) {
-    const encours = etat.telechargements["v-" + x.yt];
-    let actions = "";
-    if (etat.enLigne && x.video) {
-      actions = `<button class="btn sm" data-a="video-une" data-i="${i}" ${encours ? "disabled" : ""}>${ic("telecharger", "sm")}${encours ? "Téléchargement…" : "Télécharger"}</button>`;
-    }
-    if (etat.enLigne) actions += `<a class="btn sm outline" href="${esc(x.lien)}" target="_blank" rel="noopener">${ic("lien", "sm")}En ligne</a>`;
-    const texte = !x.video ? "Vidéo pas encore dans le Drive" : etat.enLigne ? "Vidéo pas sur le téléphone" : "Vidéo pas téléchargée (pas de réseau)";
-    media = `<div class="media"><div class="vide">${ic("sansvideo", "lg")}<span>${texte}</span>
-      ${actions ? `<div class="row">${actions}</div>` : ""}</div></div>`;
-  } else media = "";
-
-  const chips = [x.charge, x.series && x.series + (Number(x.series) > 1 ? " séries" : " série"),
-                 x.reps && (/^\d+$/.test(x.reps) ? x.reps + " reps" : x.reps), x.recup && x.recup !== "-" ? "récup " + x.recup : ""]
-    .filter(Boolean).map((t) => `<span class="badge">${esc(t)}</span>`).join("");
-
-  const h = historique(x.nom, S.onglet);
-  const hist = h ? `<p class="historique">${ic("historique", "sm")}${esc(h.semaine)} : ${esc([h.x.charge, h.x.reps && h.x.series + " × " + h.x.reps].filter(Boolean).join(" · "))}${rpeRempli(h.x.rpe) ? " · RPE " + esc(h.x.rpe) : ""}${h.x.commentaire ? " · « " + esc(h.x.commentaire) + " »" : ""}</p>` : "";
+  const media = blocMedia(x);
+  const chips = chipsExo(x);
+  const hist = historiqueExo(x, S.onglet);
 
   const avecPoids = x.poidsPrevu !== null;
   const avecReps = !!x.repsPrevues;
@@ -2114,13 +2156,12 @@ const actions = {
     if (etat.enLigne) preparerHorsLigne(etat.seance.ref, [etat.seance.ref], true);
   },
   "video-une": async (d) => {
-    const x = etat.seance.exos[d.i];
-    if (etat.telechargements["v-" + x.yt]) return;
-    etat.telechargements["v-" + x.yt] = { fait: 0, total: 1 };
+    if (etat.telechargements["v-" + d.yt]) return;
+    etat.telechargements["v-" + d.yt] = { fait: 0, total: 1 };
     rendre();
-    try { await telechargerVideo(x.yt); }
+    try { await telechargerVideo(d.yt); }
     catch (err) { toast("Vidéo non téléchargée : " + err.message, 4000); }
-    delete etat.telechargements["v-" + x.yt];
+    delete etat.telechargements["v-" + d.yt];
     rendreDiscret();
   },
   "reessayer": async (d) => {
@@ -2224,6 +2265,13 @@ const actions = {
     naviguer("recap");
   },
   "continuer": () => history.back(),
+  "voir-exo": (d) => { etat.apercuExo = d.i; naviguer("apercuExo"); },
+  "apercu-exo-pas": (d) => {
+    etat.apercuExo += d.v;
+    libererVideos();
+    rendre();
+    window.scrollTo(0, 0);
+  },
   "rpe-feuille": (d) => {
     etat.menu = { rpe: true, ref: d.ref, i: d.i };
     history.pushState({ vue: etat.vue, menu: true }, "");
