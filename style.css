@@ -188,6 +188,7 @@ svg.i.anneau .fond { stroke: var(--border); }
 .exo { margin-bottom: 22px; }
 .media { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
 .media video { display: block; width: 100%; max-height: 44vh; object-fit: contain; background: #000; }
+.lecteur-yt { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 44vh; border: 0; }
 .media .vide { aspect-ratio: 16 / 9; max-height: 22vh; width: 100%; display: grid; place-items: center; color: var(--fg-subtle); background: var(--muted); gap: 6px; text-align: center; font-size: 13px; padding: 12px; }
 .exo-titre { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 8px; }
 .exo-titre h2 { font-size: 22px; line-height: 1.2; letter-spacing: -.02em; color: var(--fg); margin: 0; font-weight: 700; flex: 1; }

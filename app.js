@@ -1659,6 +1659,13 @@ function vueSeance() {
 function blocMedia(x) {
   if (x.yt && etat.videos.has(x.yt)) return `<div class="media"><div class="vplace" data-yt="${esc(x.yt)}"></div></div>`;
   if (!x.lien) return "";
+  // Vidéo pas dans le Drive : le lecteur YouTube, tant qu'il y a du réseau. Il ne
+  // sert qu'à ça : une vidéo du Drive se télécharge, et marche ensuite sans réseau.
+  if (x.yt && !x.video && etat.enLigne) {
+    return `<div class="media"><iframe class="lecteur-yt" src="https://www.youtube-nocookie.com/embed/${esc(x.yt)}?rel=0&playsinline=1"
+        title="${esc(x.nom)}" allow="encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
+      <p class="xs subtle mt"><a href="${esc(x.lien)}" target="_blank" rel="noopener">Ouvrir sur YouTube</a> si la vidéo ne se lance pas</p>`;
+  }
   const encours = etat.telechargements["v-" + x.yt];
   let actions = "";
   if (etat.enLigne && x.video) {
