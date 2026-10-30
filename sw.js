@@ -7,7 +7,7 @@
  *   GitHub vX.Y.Z du dépôt) : correctif → Y+1 ; nouvelle fonction → X+1, Y=0 ;
  *   gros changement → 2.0.0. (Avant le 2026-10-25 : ma-seance-v1…v20 = v1.0.0.)
  */
-const VERSION = "flx-v1.4.2";
+const VERSION = "flx-v1.5.0";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "db.js", "sync.js", "demo.js",
   "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon.svg", "favicon-32.png",
@@ -29,8 +29,9 @@ self.addEventListener("install", function (e) {
 
 self.addEventListener("activate", function (e) {
   e.waitUntil(
+    // On ne garde que la version courante, et la copie de secours des données (db.js).
     caches.keys()
-      .then((cles) => Promise.all(cles.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((cles) => Promise.all(cles.filter((k) => k !== VERSION && k !== CACHE_SECOURS).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

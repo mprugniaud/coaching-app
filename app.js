@@ -238,6 +238,7 @@ async function demarrer() {
     });
   }
 
+  await restaurerStockage();
   etat.config = await kvGet("config");
   await lienMagique();
   etat.prog = await kvGet("programme");
@@ -250,6 +251,7 @@ async function demarrer() {
     await kvDel("encours");
   }
   await rafraichirLocaux();
+  protegerStockage();
 
   if (!etat.config) etat.vue = "config";
   else if (etat.seance) etat.vue = "seance";
@@ -263,9 +265,79 @@ async function demarrer() {
       majProgramme(true).then(preparerSemaineEnCours);
       majCharge(true);
       telechargerSons();
+      envoyerDiag();
     }
   }
   setInterval(tic, 1000);
+}
+
+/**
+ * Base vidée mais copie de secours présente : on remet tout en place sans
+ * rien demander, l'élève repart même sans réseau (les vidéos, elles, sont à
+ * retélécharger). Chaque restauration est comptée pour le diagnostic.
+ */
+async function restaurerStockage() {
+  etat.restaurations = (await kvGet("restaurations")) || (await secoursLire("restaurations")) || [];
+  if (!(await kvGet("installation"))) {
+    const copie = await secoursLire("installation");
+    await kvSet("installation", copie || { id: uuid(), cree: Date.now() });
+  }
+  if (await kvGet("config")) return;
+
+  const config = await secoursLire("config");
+  if (!config) return;
+  for (const k of ["programme", "historique"]) {
+    const v = await secoursLire(k);
+    if (v !== undefined) await kvSet(k, v);
+  }
+  await kvSet("config", config);
+  etat.restaurations = etat.restaurations.concat(Date.now()).slice(-20);
+  await kvSet("restaurations", etat.restaurations);
+}
+
+/**
+ * Demande au navigateur de ne pas vider le stockage de l'app. À chaque
+ * lancement tant que ce n'est pas accordé : Chrome décide selon l'usage du
+ * site (app installée, visites), un refus d'hier peut être accordé aujourd'hui.
+ */
+async function protegerStockage() {
+  const s = navigator.storage;
+  if (!s || !s.persist || !s.persisted) { etat.protege = null; return null; }
+  try {
+    etat.protege = (await s.persisted()) || (await s.persist());
+  } catch (err) {
+    etat.protege = false;
+  }
+  return etat.protege;
+}
+
+/**
+ * État du stockage envoyé au Pilotage (onglet « _Diag app ») à chaque lancement
+ * en ligne : c'est la seule trace qui survit à un vidage complet du téléphone,
+ * et la seule façon de savoir pourquoi le profil a sauté. Serveur pas encore à
+ * jour ou réseau capricieux : tant pis, ce n'est qu'un diagnostic.
+ */
+async function envoyerDiag() {
+  const c = etat.config;
+  if (!c || c.demo) return;
+  try {
+    const protege = await protegerStockage();
+    const estim = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : {};
+    const mo = (o) => (o ? Math.round(o / 1048576) : "");
+    const version = (await caches.keys()).find((k) => k.startsWith("flx-v")) || "";
+    await posterJSON(c.url, {
+      action: "diag", cle: c.cle,
+      installation: (await kvGet("installation") || {}).id,
+      protege: protege,
+      usageMo: mo(estim.usage),
+      quotaMo: mo(estim.quota),
+      videos: etat.videos.size,
+      restaurations: etat.restaurations.length,
+      mode: matchMedia("(display-mode: standalone)").matches ? "installée" : "navigateur",
+      navigateur: navigator.userAgent,
+      version: version.replace("flx-", "")
+    });
+  } catch (err) {}
 }
 
 /**
@@ -549,8 +621,6 @@ async function preparer_(t, refs, discret) {
     return;
   }
 
-  // Sans ça, Android peut vider le stockage d'une app peu utilisée.
-  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   rendreDiscret();
   // Plusieurs à la fois : chaque appel à Apps Script met quelques secondes à
   // démarrer, c'est ce délai (pas la taille des vidéos) qui fait la durée.
@@ -1518,6 +1588,13 @@ function vueReglages() {
       if (el) el.textContent = Math.round(e.usage / 1048576) + " Mo utilisés";
     });
   }
+  const r = etat.restaurations || [];
+  const derniere = r.length ? ` Profil restauré ${r.length} fois (dernière : ${new Date(r[r.length - 1]).toLocaleDateString("fr-FR")}).` : "";
+  const protection = etat.protege
+    ? "Protégé : le téléphone ne doit pas le vider de lui-même."
+    : etat.protege === false
+      ? "Pas encore protégé : le téléphone peut le vider s'il manque de place. Garde l'app installée et ouvre-la souvent."
+      : "Protection indisponible sur ce navigateur.";
   return `<button class="back" data-a="retour">${ic("gauche", "sm")}Semaines</button>
     <div class="top"><h1>Réglages</h1></div>
     <div class="liste">
@@ -1532,6 +1609,8 @@ function vueReglages() {
       <div class="item"><div class="grow"><p style="font-weight:500">Vidéos sur le téléphone : ${etat.videos.size}</p>
         <p class="xs muted" id="stockage"></p></div>
         <button class="btn sm danger" data-a="vider-videos" ${etat.videos.size ? "" : "disabled"}>Supprimer</button></div>
+      <div class="item"><div class="grow"><p style="font-weight:500">Stockage de l'app</p>
+        <p class="xs muted">${esc(protection + derniere)}</p></div></div>
     </div>
     <p class="xs subtle mt">Version de l'app : <span id="version">${esc(etat.versionApp || "…")}</span></p>`;
 }
@@ -1970,13 +2049,16 @@ const actions = {
     rendre();
   },
   "changer-lien": async () => {
-    if (etat.seance && !confirm("La séance en cours sera abandonnée. Continuer ?")) return;
+    const question = etat.seance ? "La séance en cours sera abandonnée. Continuer ?"
+      : etat.config.demo ? "" : "Déconnecter ce téléphone ? Il te faudra ton lien perso pour revenir.";
+    if (question && !confirm(question)) return;
     etat.seance = null;
     await kvDel("encours");
     await kvDel("config");
     etat.config = null;
     allerA("config");
   },
+  "recharger": () => location.reload(),
   "vider-videos": async () => {
     if (!confirm("Supprimer toutes les vidéos du téléphone ?")) return;
     await videosVider();
@@ -2138,4 +2220,9 @@ document.addEventListener("change", (ev) => {
   }
 });
 
-demarrer();
+// Stockage illisible au démarrage : un message plutôt qu'un écran vide.
+demarrer().catch((err) => {
+  $app.innerHTML = `<div class="top"><h1>Impossible d'ouvrir l'app</h1></div>
+    <p class="muted">Le stockage du téléphone ne répond pas (${esc(err && err.message || "erreur inconnue")}). Tes données ne sont pas forcément perdues : réessaie.</p>
+    <div class="pied"><button class="btn lg" data-a="recharger">Réessayer</button></div>`;
+});
