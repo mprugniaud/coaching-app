@@ -207,8 +207,8 @@ function poidsPrevu(charge) {
 /** Reps (ou durée) prévues : « 7/côté » → 7 ; « 35 s/côté » → 35 s ; « 8 min » → 8 min. */
 function repsPrevues(reps) {
   const t = String(reps || "");
-  // « 2'30 » : minutes et secondes, en secondes pour rester un seul nombre.
-  const ms = /^\s*(\d+)\s*'\s*(\d+)/.exec(t);
+  // « 2'30 », « 7 min 30 » : minutes et secondes, en secondes pour rester un seul nombre.
+  const ms = /^\s*(\d+)\s*(?:'|min|mn)\s*([0-5]\d)(?!\d)/i.exec(t);
   // Fourchette (« 25-30 s/côté ») : le bas, ajustable. « 25 m » = des mètres, pas des minutes.
   const m = ms ? null : /^\s*(\d+)(?:\s*[-–]\s*\d+)?\s*(min|mn|sec|s\b|''|"|')?/i.exec(t);
   if (!ms && !m) return null;
