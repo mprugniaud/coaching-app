@@ -2,7 +2,7 @@
  * Envoi de la file vers la page web du Pilotage : séances faites dans l'app
  * (action « enregistrer », champ envoi) et, depuis le suivi de charge, séances
  * déclarées (« declarer ») ou programmées modifiées (« programmee ») : champs
- * action + donnees.
+ * action + donnees. Une correction de RPE est un « enregistrer » avec rpeSeul.
  * Appelé par la page (ouverture, retour du réseau, fin de séance) ET par le
  * service worker (Background Sync : Android envoie même l'app fermée).
  *
@@ -52,6 +52,7 @@ async function envoyerFile_() {
       await envoiSupprimer(e.id);
       bilan.envoyes++;
       if (e.action) bilan.charge = true;    // la charge affichée est à relire
+      if (e.envoi && e.envoi.rpeSeul) bilan.corrections = (bilan.corrections || 0) + 1;
       if (rep.rapport) bilan.rapports.push({ resume: e.resume, rapport: rep.rapport });
     } else {
       e.refuse = true;

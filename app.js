@@ -302,13 +302,12 @@ async function restaurerStockage() {
  */
 async function protegerStockage() {
   const s = navigator.storage;
-  if (!s || !s.persist || !s.persisted) { etat.protege = null; return null; }
+  if (!s || !s.persist || !s.persisted) return null;
   try {
-    etat.protege = (await s.persisted()) || (await s.persist());
+    return (await s.persisted()) || (await s.persist());
   } catch (err) {
-    etat.protege = false;
+    return false;
   }
-  return etat.protege;
 }
 
 /**
@@ -431,7 +430,8 @@ async function synchroniser() {
 
   if (bilan && bilan.envoyes) {
     const ignores = [].concat(...bilan.rapports.map((r) => r.rapport.ignores || []));
-    toast("✓ " + bilan.envoyes + (bilan.envoyes > 1 ? " séances écrites" : " séance écrite") +
+    const seances = bilan.envoyes - (bilan.corrections || 0);
+    toast("✓ " + (seances ? seances + (seances > 1 ? " séances écrites" : " séance écrite") : "RPE corrigé") +
           " dans ta feuille" + (ignores.length ? " — non retrouvés : " + ignores.join(", ") : ""), 5000);
   }
   if (etat.envois.some((e) => !e.refuse)) syncArrierePlan();
@@ -467,6 +467,7 @@ async function majProgramme(silencieux) {
       rep = await r.json();
     }
     if (!rep.ok) throw new Error(rep.erreur || "réponse inattendue");
+    reporterCorrections(rep);
     etat.prog = rep;
     etat.majA = Date.now();
     await kvSet("programme", rep);
@@ -882,7 +883,7 @@ async function enregistrerSeance() {
   etat.historique[S.ref] = {
     date: Date.now(), duree: envoi.duree, rpePied: envoi.rpePied,
     exos: S.exos.map((x, k) => ({
-      nom: x.nom, saute: x.saute, raison: x.raison, rpe: x.rpe, resume: resumeSets(x),
+      ligne: x.ligne, nom: x.nom, saute: x.saute, raison: x.raison, rpe: x.rpe, resume: resumeSets(x),
       commentaire: envoi.exos[k].commentaire
     }))
   };
@@ -895,6 +896,66 @@ async function enregistrerSeance() {
   allerA("semaine");
   toast(etat.enLigne ? "Séance enregistrée, envoi en cours…" : "Séance enregistrée. Envoi dès que le réseau revient.", 4000);
   synchroniser();               // programme lui-même le Background Sync s'il reste des envois
+}
+
+
+/** Ce qui a été fait sur cet exercice ; par la ligne si connue : un exo peut revenir deux fois dans une séance. */
+function exoHistorique(histo, x) {
+  return histo && (histo.exos.find((y) => y.ligne === x.ligne && nomCle(y.nom) === nomCle(x.nom))
+    || histo.exos.find((y) => nomCle(y.nom) === nomCle(x.nom)));
+}
+
+/**
+ * Corrige un RPE d'une séance déjà enregistrée (i absent = RPE de la séance,
+ * bloc course). Passe par la file d'envoi, donc marche hors réseau et part
+ * après la séance elle-même. rpeSeul : le serveur laisse les commentaires
+ * tranquilles, et ni la durée ni la date ne sont envoyées. La charge suit
+ * seule, elle est recalculée depuis la feuille.
+ * L'affichage est mis à jour avant le premier await : la feuille de choix se
+ * ferme juste après et redessine l'écran.
+ */
+async function corrigerRPE(ref, i, v) {
+  const t = trouverSeance(ref);
+  if (!t) return;
+  const s = t.seance, h = etat.historique[ref];
+  const envoi = { id: uuid(), ref: ref, titre: s.titre, onglet: t.semaine.onglet, rpeSeul: true, rpePied: "", exos: [] };
+  if (s.type === "course") {
+    s.rpePied = String(v);
+    if (h) h.rpePied = v;
+    envoi.rpePied = v;
+  } else {
+    const x = s.exos[i];
+    if (!x) return;
+    x.rpe = String(v);
+    const he = exoHistorique(h, x);
+    if (he) he.rpe = v;
+    envoi.exos.push({ ligne: x.ligne, nom: x.nom, rpe: v });
+  }
+  await envoiMettre({ id: envoi.id, envoi: envoi, resume: "Correction du RPE · " + s.titre + " · " + t.semaine.onglet, cree: Date.now(), essais: 0 });
+  await kvSet("programme", etat.prog);
+  if (h) await kvSet("historique", etat.historique);
+  await rafraichirLocaux();
+  toast(etat.enLigne ? "RPE corrigé, envoi en cours…" : "RPE corrigé. Envoi dès que le réseau revient.", 4000);
+  synchroniser();
+}
+
+/**
+ * Programme relu du serveur alors qu'une correction n'est pas encore partie :
+ * on la remet par-dessus, sinon l'ancien RPE réapparaîtrait à l'écran.
+ */
+function reporterCorrections(prog) {
+  const ancien = etat.prog;
+  etat.prog = prog;
+  etat.envois.filter((e) => e.envoi && e.envoi.rpeSeul).forEach((e) => {
+    const t = trouverSeance(e.envoi.ref);
+    if (!t) return;
+    if (e.envoi.rpePied) t.seance.rpePied = String(e.envoi.rpePied);
+    e.envoi.exos.forEach((c) => {
+      const x = t.seance.exos.find((y) => y.ligne === c.ligne && nomCle(y.nom) === nomCle(c.nom));
+      if (x) x.rpe = String(c.rpe);
+    });
+  });
+  etat.prog = ancien;
 }
 
 
@@ -1342,6 +1403,7 @@ function vueApercu() {
   const tel = etat.telechargements[s.ref];
   const histo = etat.historique[s.ref];
   const faite = seanceFaite(s) || !!histo;
+  const corrigeable = faite && !encours;
 
   let liste = "";
   let n = 0;
@@ -1356,7 +1418,7 @@ function vueApercu() {
       const detail = [x.nbSeries + " × " + (x.reps || "—"), x.charge, e.length === 1 && x.recup && x.recup !== "-" ? "récup " + x.recup : ""]
         .filter(Boolean).join(" · ");
       // Séance faite : ce qui a été fait (détail gardé sur le téléphone, sinon la feuille).
-      const h = histo && histo.exos.find((y) => nomCle(y.nom) === nomCle(x.nom));
+      const h = exoHistorique(histo, x);
       const fait = h ? (h.saute ? "Sauté" + (h.raison ? " — " + h.raison : "") : h.resume) : "";
       const comm = h ? h.commentaire : x.commentaire;
       const rpe = h ? (h.rpe || "") : x.rpe;
@@ -1365,9 +1427,17 @@ function vueApercu() {
           ${fait ? `<p class="xs ${fait === "aucune série" ? "subtle" : ""}" style="margin-top:2px">${ic(fait === "aucune série" || (h && h.saute) ? "x" : "check", "sm")} ${esc(fait)}</p>` : ""}
           ${faite && comm ? `<p class="xs subtle" style="margin-top:2px">${esc(comm.indexOf("📱") === -1 && h ? "📱 " + comm : comm)}</p>` : ""}</div>
         ${x.lien && !(x.yt && etat.videos.has(x.yt)) ? `<span class="subtle" title="Vidéo pas sur le téléphone">${ic("sansvideo", "sm")}</span>` : ""}
-        ${rpeRempli(rpe) ? `<span class="badge ${classeRPE(num(rpe))}">RPE ${esc(rpe)}</span>` : ""}</div>`;
+        ${s.type === "salle" && corrigeable && !(h && h.saute)
+          ? boutonRPE(rpe, `data-ref="${esc(s.ref)}" data-i="${i}"`)
+          : rpeRempli(rpe) ? `<span class="badge ${classeRPE(num(rpe))}">RPE ${esc(rpe)}</span>` : ""}</div>`;
     });
   });
+  // Bloc course : un seul RPE, celui de la séance.
+  const rpePied = histo && histo.rpePied ? histo.rpePied : s.rpePied;
+  const pied = s.type !== "course" || !faite ? ""
+    : `<div class="item"><div class="grow"><p style="font-weight:500">RPE de la séance</p></div>
+        ${corrigeable ? boutonRPE(rpePied, `data-ref="${esc(s.ref)}"`)
+          : rpeRempli(rpePied) ? `<span class="badge ${classeRPE(num(rpePied))}">RPE ${esc(rpePied)}</span>` : ""}</div>`;
 
   return `<button class="back" data-a="retour">${ic("gauche", "sm")}${esc(nomSemaine(t.semaine.onglet).titre)}</button>
     <div class="top"><div><h1>${esc(s.titre)}</h1><p class="muted">${s.type === "course" ? "Course" : "Salle"}${histo
@@ -1378,7 +1448,8 @@ function vueApercu() {
       <div><b class="tnum">${v.ici}/${v.total}</b><span>vidéos</span></div></div>
     ${barreVideos(s, v)}
     ${faite && !encours ? `<h2 class="row">${ic("historique", "sm")}Ce que tu as fait</h2>` : ""}
-    <div class="liste">${liste}</div>
+    <div class="liste">${liste}${pied}</div>
+    ${corrigeable ? `<p class="xs subtle mt">Touche un RPE pour le corriger : ta feuille et ta charge suivront.</p>` : ""}
     <div class="pied">${encours
       ? `<button class="btn lg" data-a="reprendre">Reprendre la séance</button>`
       : faite ? `<button class="btn lg outline" data-a="commencer" data-ref="${esc(s.ref)}">${ic("rafraichir")}Refaire la séance</button>`
@@ -1482,7 +1553,36 @@ function stepper(i, s, champ, valeur, modif) {
     <button data-a="pas" data-i="${i}" data-s="${s}" data-champ="${champ}" data-v="1" aria-label="Plus">${ic("plus", "sm")}</button></div>`;
 }
 
+/** Badge RPE qu'on touche pour le corriger (feuille de choix). */
+function boutonRPE(rpe, attributs) {
+  return rpeRempli(rpe)
+    ? `<button class="badge ${classeRPE(num(rpe))}" style="cursor:pointer" data-a="rpe-feuille" ${attributs}>RPE ${esc(rpe)}${ic("crayon", "sm")}</button>`
+    : `<button class="badge danger" style="cursor:pointer" data-a="rpe-feuille" ${attributs}>RPE ?</button>`;
+}
+
+/**
+ * Feuille de choix du RPE : récapitulatif de la séance en cours (pas de ref),
+ * ou séance déjà enregistrée. Ne dépend pas d'etat.seance dans le second cas.
+ */
+function feuilleRPE(m) {
+  const t = m.ref ? trouverSeance(m.ref) : null;
+  if (m.ref && !t) return "";
+  const s = t ? t.seance : etat.seance;
+  const x = s && s.exos[m.i];
+  const h = t && etat.historique[m.ref];
+  const pied = t && s.type === "course";
+  if (!pied && !x) return "";
+  const actuel = pied ? num((h && h.rpePied) || s.rpePied)
+    : t ? num((exoHistorique(h, x) || x).rpe) : x.rpe;
+  return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
+    <div class="poignee"></div><div class="titre">${esc(pied ? "RPE de la séance" : x.nom)}<br><span class="xs muted">1 facile · 10 max</span></div>
+    <div class="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((v) =>
+      `<button class="${actuel === v ? "on" : ""}" data-a="${actuel === v ? "menu-fermer" : "rpe-choisir"}" data-v="${v}">${v}</button>`).join("")}</div>
+    <button data-a="menu-fermer">${ic("x")}Annuler</button></div></div>`;
+}
+
 function vueMenu() {
+  if (etat.menu && etat.menu.rpe) return feuilleRPE(etat.menu);
   if (etat.menu === "seance") {
     return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
       <div class="poignee"></div><div class="titre">${esc(etat.seance.titre)}</div>
@@ -1536,12 +1636,9 @@ function vueRecap() {
   const moy = rpes.length ? fmtNum(Math.round(rpes.reduce((a, b) => a + b, 0) / rpes.length * 10) / 10) : "—";
 
   const lignes = S.exos.map((x, i) => {
-    const etapeIdx = S.etapes.findIndex((e) => e.includes(i));
-    const manque = S.type === "salle" && !x.saute && !x.rpe;
     const comm = commentaireExo(x);
     const badge = x.saute ? '<span class="badge">Sauté</span>'
-      : S.type !== "salle" ? "" : manque ? `<button class="badge danger" style="cursor:pointer" data-a="aller" data-v="${etapeIdx}">RPE ?</button>`
-      : `<span class="badge ${classeRPE(x.rpe)}">RPE ${x.rpe}</span>`;
+      : S.type !== "salle" ? "" : boutonRPE(x.rpe, `data-i="${i}"`);
     return `<div class="item"><div class="grow"><p style="font-weight:500">${esc(x.nom)}</p>
       ${comm ? `<p class="comm">📱 ${esc(comm)}</p>` : ""}</div>${badge}</div>`;
   }).join("");
@@ -1588,13 +1685,6 @@ function vueReglages() {
       if (el) el.textContent = Math.round(e.usage / 1048576) + " Mo utilisés";
     });
   }
-  const r = etat.restaurations || [];
-  const derniere = r.length ? ` Profil restauré ${r.length} fois (dernière : ${new Date(r[r.length - 1]).toLocaleDateString("fr-FR")}).` : "";
-  const protection = etat.protege
-    ? "Protégé : le téléphone ne doit pas le vider de lui-même."
-    : etat.protege === false
-      ? "Pas encore protégé : le téléphone peut le vider s'il manque de place. Garde l'app installée et ouvre-la souvent."
-      : "Protection indisponible sur ce navigateur.";
   return `<button class="back" data-a="retour">${ic("gauche", "sm")}Semaines</button>
     <div class="top"><h1>Réglages</h1></div>
     <div class="liste">
@@ -1609,8 +1699,6 @@ function vueReglages() {
       <div class="item"><div class="grow"><p style="font-weight:500">Vidéos sur le téléphone : ${etat.videos.size}</p>
         <p class="xs muted" id="stockage"></p></div>
         <button class="btn sm danger" data-a="vider-videos" ${etat.videos.size ? "" : "disabled"}>Supprimer</button></div>
-      <div class="item"><div class="grow"><p style="font-weight:500">Stockage de l'app</p>
-        <p class="xs muted">${esc(protection + derniere)}</p></div></div>
     </div>
     <p class="xs subtle mt">Version de l'app : <span id="version">${esc(etat.versionApp || "…")}</span></p>`;
 }
@@ -2136,7 +2224,18 @@ const actions = {
     naviguer("recap");
   },
   "continuer": () => history.back(),
-  "aller": (d) => { etat.seance.etape = d.v; sauver(); history.back(); },
+  "rpe-feuille": (d) => {
+    etat.menu = { rpe: true, ref: d.ref, i: d.i };
+    history.pushState({ vue: etat.vue, menu: true }, "");
+    rendre();
+  },
+  "rpe-choisir": (d) => {
+    const m = etat.menu;
+    if (!m) return;
+    if (m.ref) corrigerRPE(m.ref, m.i, d.v);
+    else { etat.seance.exos[m.i].rpe = d.v; sauver(); }
+    fermerMenuOuRendre();
+  },
   "rpe-pied": (d) => {
     etat.seance.rpePied = etat.seance.rpePied === d.v ? null : d.v;
     sauver(); rendre();

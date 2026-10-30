@@ -255,6 +255,9 @@ textarea:focus, input.champ:focus { border-color: var(--fg-subtle); box-shadow: 
 .feuille button:active { background: var(--muted); }
 .feuille button.danger { color: var(--danger); }
 .feuille button .xs { font-weight: 400; }
+.feuille .rpe { padding: 0 12px 8px; }
+.feuille .rpe button { display: block; height: 44px; padding: 0; border: 1px solid var(--border); background: var(--muted); font: 600 16px "Inter", system-ui, sans-serif; text-align: center; }
+.feuille .rpe button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 
 #toast {
   position: fixed; left: 16px; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 30;
