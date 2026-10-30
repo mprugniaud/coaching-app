@@ -1808,12 +1808,27 @@ async function brancherVideos() {
       if (!v) {
         v = document.createElement("video");
         Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: true, controls: true });
+        v.addEventListener("error", () => videoIllisible(yt, v));
         v.src = URL.createObjectURL(rec.blob);
         etat.videoEls[yt] = v;
       }
     }
     if (place.isConnected) { place.replaceWith(v); v.play().catch(() => {}); }
   }
+}
+
+/**
+ * Copie que le téléphone ne sait pas lire : sans ça elle reste là pour toujours, et
+ * rien ne propose de la reprendre. On l'oublie, l'écran repropose « Télécharger ».
+ * Le test sur l'élément écarte une vidéo déjà libérée (sortie d'une séance).
+ */
+async function videoIllisible(yt, v) {
+  if (etat.videoEls[yt] !== v || !v.error || v.error.code < 3) return;
+  URL.revokeObjectURL(v.src);
+  delete etat.videoEls[yt];
+  etat.videos.delete(yt);
+  await videoSupprimer(yt);
+  rendreDiscret();
 }
 
 /** Couleur d'un RPE (récapitulatif, écran d'une séance) : 1–4 facile, 5–6 modéré, 7–8 dur, 9–10 max. */

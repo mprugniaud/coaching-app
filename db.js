@@ -101,6 +101,7 @@ async function secoursLire(k) {
 const videoGet = (yt) => idb("videos", "readonly", (s) => s.get(yt));
 const videoSet = (v) => idb("videos", "readwrite", (s) => s.put(v));
 const videoCles = () => idb("videos", "readonly", (s) => s.getAllKeys());
+const videoSupprimer = (yt) => idb("videos", "readwrite", (s) => s.delete(yt));
 const videosVider = () => idb("videos", "readwrite", (s) => s.clear());
 
 const envoisTous = () => idb("envois", "readonly", (s) => s.getAll())
