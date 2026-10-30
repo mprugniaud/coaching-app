@@ -32,6 +32,8 @@ const SERVEUR = "https://script.google.com/macros/s/AKfycbwg5uKntHvtEeS2QgknmmYu
 
 /** Version de la séance en cours sauvegardée : une ancienne est abandonnée. */
 const VERSION_SEANCE = 2;
+const CHRONO_PREPA = 3;     // s avant le premier effort
+const CHRONO_COTE = 5;      // s pour changer de côté
 
 const etat = {
   config: null,        // {url, cle, demo}
@@ -63,6 +65,7 @@ const etat = {
 // Tracés Lucide (ISC), en ligne : rien à charger, marche hors réseau.
 const ICONES = {
   check: '<path d="M20 6 9 17l-5-5"/>',
+  lecture: '<polygon points="6 3 20 12 6 21 6 3"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   gauche: '<path d="m15 18-6-6 6-6"/>',
   droite: '<path d="m9 18 6-6-6-6"/>',
@@ -203,11 +206,17 @@ function poidsPrevu(charge) {
 
 /** Reps (ou durée) prévues : « 7/côté » → 7 ; « 35 s/côté » → 35 s ; « 8 min » → 8 min. */
 function repsPrevues(reps) {
-  const m = /^\s*(\d+)\s*(min|mn|sec|s\b|'|")?/i.exec(reps || "");
-  if (!m) return null;
+  const t = String(reps || "");
+  // « 2'30 » : minutes et secondes, en secondes pour rester un seul nombre.
+  const ms = /^\s*(\d+)\s*'\s*(\d+)/.exec(t);
+  // Fourchette (« 25-30 s/côté ») : le bas, ajustable. « 25 m » = des mètres, pas des minutes.
+  const m = ms ? null : /^\s*(\d+)(?:\s*[-–]\s*\d+)?\s*(min|mn|sec|s\b|''|"|')?/i.exec(t);
+  if (!ms && !m) return null;
   let unite = "";
-  if (m[2]) unite = /^m/i.test(m[2]) || m[2] === "'" ? "min" : "s";
-  return { n: Number(m[1]), unite: unite };
+  if (ms) unite = "s";
+  else if (m[2]) unite = /^m/i.test(m[2]) || m[2] === "'" ? "min" : "s";
+  return { n: ms ? Number(ms[1]) * 60 + Number(ms[2]) : Number(m[1]), unite: unite,
+           cote: !!unite && /c[oô]t[ée]|jambe|bras/i.test(t) };
 }
 
 function fmtReps(x, n) {
@@ -978,6 +987,7 @@ function demarrerRepos(sec, suite) {
 
 function afficherRepos() {
   clearInterval(minuteurRepos);
+  if (etat.seance && etat.seance.chrono) return afficherChrono();
   const R = etat.seance && etat.seance.repos;
   const visible = !!R && etat.vue === "seance";
   $repos.hidden = !visible;
@@ -1019,6 +1029,127 @@ function afficherRepos() {
   minuteurRepos = setInterval(maj, 250);
 }
 
+/**
+ * Chrono d'une série en temps. Tout est calculé sur l'heure de fin et sauvé
+ * avec la séance : il survit à l'écran verrouillé et à une réouverture de l'app.
+ * Série « /côté » : deux passages, avec le temps de changer de côté entre les deux.
+ */
+function lancerChrono(i, s) {
+  const S = etat.seance;
+  const x = S.exos[i];
+  const n = x.sets[s].reps > 0 ? x.sets[s].reps : x.repsPrevues.n;
+  finRepos();
+  S.chrono = { i: i, s: s, phase: "prepa", cote: 0, nbCotes: x.repsPrevues.cote ? 2 : 1,
+               duree: Math.round(x.repsPrevues.unite === "min" ? n * 60 : n),
+               fin: Date.now() + CHRONO_PREPA * 1000, total: CHRONO_PREPA };
+  sauver();
+  afficherRepos();
+}
+
+/**
+ * Passe aux phases dont l'heure est dépassée, plusieurs d'un coup au retour
+ * d'un écran verrouillé (les signaux sont alors sautés).
+ * @return {boolean} vrai quand la série est finie
+ */
+function avancerChrono(C) {
+  while (Date.now() >= C.fin) {
+    const aLHeure = Date.now() - C.fin < 1500;
+    if (C.phase === "prepa") {
+      if (aLHeure) signalCourt(C.avecSon);
+      Object.assign(C, { phase: "effort", fin: C.fin + C.duree * 1000, total: C.duree, decompte: false, avecSon: false });
+    } else if (C.cote < C.nbCotes - 1) {
+      if (aLHeure) signalCourt(false);
+      Object.assign(C, { phase: "prepa", cote: C.cote + 1, fin: C.fin + CHRONO_COTE * 1000, total: CHRONO_COTE });
+    } else return true;
+    sauver();
+  }
+  return false;
+}
+
+function afficherChrono() {
+  const S = etat.seance, C = S.chrono;
+  const visible = etat.vue === "seance";
+  $repos.hidden = !visible;
+  document.body.classList.toggle("avec-repos", visible);
+  if (!visible) return;
+
+  const x = S.exos[C.i];
+  const prepa = C.phase === "prepa";
+  const titre = prepa ? (C.cote ? "Change de côté" : "Prépare-toi")
+    : C.nbCotes > 1 ? "Côté " + (C.cote + 1) + " / " + C.nbCotes : "C'est parti";
+  const boutons = prepa ? `<button class="btn outline" data-a="chrono-annuler">Annuler</button>`
+    : (C.pause !== undefined
+        ? `<button class="btn outline" data-a="chrono-annuler">Annuler</button><button class="btn outline" data-a="chrono-reprendre">Reprendre</button>`
+        : `<button class="btn outline" data-a="chrono-pause">Pause</button>`) +
+      `<button class="btn" data-a="chrono-fin">Terminer</button>`;
+  const P = 2 * Math.PI * 66;
+  $repos.classList.remove("fini");
+  $repos.innerHTML = `
+    <div class="xs subtle" style="font-weight:600;letter-spacing:.06em;text-transform:uppercase">${esc(titre)}</div>
+    <div class="anneau"><svg viewBox="0 0 150 150"><circle class="fond" cx="75" cy="75" r="66"/>
+      <circle class="prog" cx="75" cy="75" r="66" stroke-dasharray="${P}" stroke-dashoffset="0"/></svg>
+      <div class="temps"></div></div>
+    <div class="suivant">${esc(x.nom)} · série ${C.s + 1}</div>
+    <div class="row">${boutons}</div>`;
+  const $t = $repos.querySelector(".temps");
+  const $p = $repos.querySelector(".prog");
+  const maj = () => {
+    if (C.pause === undefined) {
+      const phase = C.phase, cote = C.cote;
+      if (avancerChrono(C)) { terminerChrono(true); return; }
+      if (C.phase !== phase || C.cote !== cote) { afficherRepos(); return; }
+    }
+    const resteMs = C.pause !== undefined ? C.pause : C.fin - Date.now();
+    $t.textContent = mmss(Math.ceil(resteMs / 1000));
+    $p.setAttribute("stroke-dashoffset", String(P * (1 - Math.max(0, resteMs) / (C.total * 1000))));
+    // Même « 3, 2, 1, GO » qu'en fin de récup : le GO tombe au départ de l'effort.
+    if (C.phase === "prepa" && !C.decompte && resteMs <= SONS.go.go * 1000) {
+      C.decompte = true;
+      sonDecompte = jouerSon("go", SONS.go.go - resteMs / 1000);
+      C.avecSon = !!sonDecompte;
+    }
+  };
+  maj();
+  if (S.chrono === C) minuteurRepos = setInterval(maj, 250);
+}
+
+/**
+ * Série finie : même suite qu'une série cochée à la main (récup, son de fin).
+ * On revient sur l'exercice du chrono si l'élève a navigué entre-temps, la récup
+ * se calcule sur son tour.
+ */
+function terminerChrono(aZero) {
+  const S = etat.seance, C = S.chrono;
+  clearInterval(minuteurRepos);
+  couperDecompte();
+  S.chrono = null;
+  if (aZero) signalFin(false);
+  S.exos[C.i].sets[C.s].fait = true;
+  const k = S.etapes.findIndex((e) => e.includes(C.i));
+  if (k !== -1) S.etape = k;
+  apresSerie(C.s);
+  sauver();
+  rendre();
+}
+
+/** « Terminer » avant la fin : le temps réellement tenu remplace la durée, il part dans le commentaire. */
+function arreterChrono() {
+  const S = etat.seance, C = S.chrono;
+  const x = S.exos[C.i];
+  const resteMs = C.pause !== undefined ? C.pause : C.fin - Date.now();
+  const tenu = Math.max(1, Math.round(C.duree - resteMs / 1000));
+  x.sets[C.s].reps = x.repsPrevues.unite === "min" ? Math.round(tenu / 6) / 10 : tenu;
+  terminerChrono(false);
+}
+
+function annulerChrono() {
+  clearInterval(minuteurRepos);
+  couperDecompte();
+  etat.seance.chrono = null;
+  sauver();
+  rendre();
+}
+
 function finRepos() {
   clearInterval(minuteurRepos);
   couperDecompte();
@@ -1039,8 +1170,18 @@ function activerSon() {
 /** Fin de récup : vibration, et les bips si le « GO » de la bande-son n'a pas joué. */
 function signalFin(avecSon) {
   if (navigator.vibrate) navigator.vibrate([400, 150, 400, 150, 400]);
-  if (!audio || avecSon) return;
-  [0, 0.35, 0.7].forEach((d) => {
+  if (!avecSon) bips([0, 0.35, 0.7]);
+}
+
+/** Départ d'un effort, changement de côté : plus discret qu'une fin de récup. */
+function signalCourt(avecSon) {
+  if (navigator.vibrate) navigator.vibrate(200);
+  if (!avecSon) bips([0]);
+}
+
+function bips(moments) {
+  if (!audio) return;
+  moments.forEach((d) => {
     const o = audio.createOscillator();
     const g = audio.createGain();
     o.frequency.value = 880;
@@ -1557,12 +1698,16 @@ function carteExo(x, i, lettre) {
 
   const avecPoids = x.poidsPrevu !== null;
   const avecReps = !!x.repsPrevues;
+  const enTemps = avecReps && !!x.repsPrevues.unite;
   const colReps = !avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps";
   const lignes = x.sets.map((se, s) => {
     const poids = avecPoids ? stepper(i, s, "poids", se.poids, se.poids !== x.poidsPrevu) : "";
     const reps = avecReps ? stepper(i, s, "reps", se.reps, se.reps !== x.repsPrevues.n)
                           : `<div class="stepper"><span class="fixe">${esc(x.reps || "—")}</span></div>`;
-    return `<div class="set ${se.fait ? "fait" : ""}"><span class="n">${s + 1}</span>${poids}${reps}
+    const debut = enTemps && !se.fait
+      ? `<button class="play-serie" data-a="chrono" data-i="${i}" data-s="${s}" aria-label="Lancer le chrono de la série ${s + 1}">${ic("lecture", "sm")}</button>`
+      : `<span class="n">${s + 1}</span>`;
+    return `<div class="set ${se.fait ? "fait" : ""}">${debut}${poids}${reps}
       <button class="check ${se.fait ? "on" : ""}" data-a="valider" data-i="${i}" data-s="${s}" aria-label="Série ${s + 1} faite">${ic("check")}</button></div>`;
   }).join("");
 
@@ -1580,7 +1725,7 @@ function carteExo(x, i, lettre) {
     <div class="chips">${chips}</div>
     ${x.consigne ? `<p class="consigne">${esc(x.consigne)}</p>` : ""}
     ${hist}
-    <div class="sets ${avecPoids ? "" : "sans-poids"}">
+    <div class="sets ${avecPoids ? "" : "sans-poids"} ${enTemps ? "avec-chrono" : ""}">
       <div class="tete"><span>#</span>${avecPoids ? "<span>Poids (kg)</span>" : ""}<span>${colReps}</span><span></span></div>
       ${lignes}
       <div class="ajout"><button class="btn ghost sm" data-a="serie-plus" data-i="${i}">${ic("plus", "sm")}Série</button></div>
@@ -2213,6 +2358,8 @@ const actions = {
   },
   "valider": (d) => {
     const se = etat.seance.exos[d.i].sets[d.s];
+    const C = etat.seance.chrono;
+    if (C && C.i === d.i && C.s === d.s) etat.seance.chrono = null;   // cochée à la main : le chrono s'arrête
     se.fait = !se.fait;
     if (se.fait) apresSerie(d.s);
     sauver(); rendre();
@@ -2258,6 +2405,7 @@ const actions = {
   "prec": () => changerEtape(-1),
   "suiv": () => changerEtape(1),
   "terminer": () => {
+    if (etat.seance.chrono) { couperDecompte(); etat.seance.chrono = null; }
     finRepos();
     sonFinSeance();
     sauver();
@@ -2308,7 +2456,25 @@ const actions = {
     couperDecompte(); R.decompte = false;
     sauver();
   },
-  "repos-fin": () => finRepos()
+  "repos-fin": () => finRepos(),
+
+  // Chrono d'une série en temps
+  "chrono": (d) => lancerChrono(d.i, d.s),
+  "chrono-pause": () => {
+    const C = etat.seance.chrono;
+    if (!C) return;
+    C.pause = C.fin - Date.now();
+    sauver(); afficherRepos();
+  },
+  "chrono-reprendre": () => {
+    const C = etat.seance.chrono;
+    if (!C) return;
+    C.fin = Date.now() + C.pause;
+    delete C.pause;
+    sauver(); afficherRepos();
+  },
+  "chrono-fin": () => { if (etat.seance.chrono) arreterChrono(); },
+  "chrono-annuler": () => { if (etat.seance.chrono) annulerChrono(); }
 };
 
 /** Après une action du menu : le retour d'historique le ferme (et redessine). */

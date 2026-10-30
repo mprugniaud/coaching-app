@@ -199,6 +199,10 @@ svg.i.anneau .fond { stroke: var(--border); }
 .sets { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 10px 4px; margin-top: 12px; }
 .sets .tete, .set { display: grid; grid-template-columns: 30px 1fr 1fr 46px; gap: 8px; align-items: center; }
 .sets.sans-poids .tete, .sets.sans-poids .set { grid-template-columns: 30px 1fr 46px; }
+.sets.avec-chrono .tete, .sets.avec-chrono .set { grid-template-columns: 40px 1fr 1fr 46px; }
+.sets.avec-chrono.sans-poids .tete, .sets.avec-chrono.sans-poids .set { grid-template-columns: 40px 1fr 46px; }
+.play-serie { width: 40px; height: 40px; border-radius: 99px; border: 0; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; cursor: pointer; }
+.play-serie svg { fill: currentColor; }
 .sets .tete { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--fg-subtle); padding: 2px 0 8px; text-align: center; }
 .set { margin-bottom: 8px; }
 .set .n { width: 28px; height: 28px; border-radius: 99px; background: var(--muted); display: grid; place-items: center; font-size: 13px; font-weight: 600; color: var(--fg-muted); }
