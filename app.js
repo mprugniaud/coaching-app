@@ -251,6 +251,7 @@ async function demarrer() {
   await restaurerStockage();
   etat.config = await kvGet("config");
   await lienMagique();
+  manifestPersonnel();
   etat.prog = await kvGet("programme");
   etat.seance = await kvGet("encours");
   etat.historique = (await kvGet("historique")) || {};
@@ -283,8 +284,9 @@ async function demarrer() {
 
 /**
  * Base vidée mais copie de secours présente : on remet tout en place sans
- * rien demander, l'élève repart même sans réseau (les vidéos, elles, sont à
- * retélécharger). Chaque restauration est comptée pour le diagnostic.
+ * rien demander, l'élève repart même sans réseau, séance en cours et envois
+ * compris (les vidéos, elles, sont à retélécharger). Chaque restauration est
+ * comptée pour le diagnostic.
  */
 async function restaurerStockage() {
   etat.restaurations = (await kvGet("restaurations")) || (await secoursLire("restaurations")) || [];
@@ -292,17 +294,18 @@ async function restaurerStockage() {
     const copie = await secoursLire("installation");
     await kvSet("installation", copie || { id: uuid(), cree: Date.now() });
   }
-  if (await kvGet("config")) return;
-
-  const config = await secoursLire("config");
-  if (!config) return;
-  for (const k of ["programme", "historique"]) {
-    const v = await secoursLire(k);
-    if (v !== undefined) await kvSet(k, v);
+  const config = (await kvGet("config")) ? null : await secoursLire("config");
+  if (config) {
+    for (const k of ["programme", "historique", "charge", "encours", "sons"]) {
+      const v = await secoursLire(k);
+      if (v !== undefined) await kvSet(k, v);
+    }
+    for (const e of secoursEnvoisLire()) await envoiMettre(e);
+    await kvSet("config", config);
+    etat.restaurations = etat.restaurations.concat(Date.now()).slice(-20);
+    await kvSet("restaurations", etat.restaurations);
   }
-  await kvSet("config", config);
-  etat.restaurations = etat.restaurations.concat(Date.now()).slice(-20);
-  await kvSet("restaurations", etat.restaurations);
+  await secoursCompleter();
 }
 
 /**
@@ -363,13 +366,64 @@ async function lienMagique() {
 
   const c = etat.config;
   if (c && !c.demo && c.cle === cle && c.url === url) return;           // déjà configurée
-  if (c && !c.demo && !confirm("Ce lien est celui d'un autre compte. Remplacer le compte actuel sur ce téléphone ?")) return;
+  // Sur iPhone, l'icône garde le code d'origine (manifestPersonnel) : après un lien
+  // régénéré, on ne repose pas la question à chaque lancement.
+  const refusDeLIcone = estInstallee() && lireLocal("cle-refusee") === cle;
+  if (refusDeLIcone) return;
+  if (c && !c.demo && !confirm("Ce lien est celui d'un autre compte. Remplacer le compte actuel sur ce téléphone ?")) {
+    if (estInstallee()) ecrireLocal("cle-refusee", cle);
+    return;
+  }
 
   // Nouveau compte : rien de l'ancien ne doit se mélanger (séance en cours, programme, charge, historique).
   for (const k of ["programme", "charge", "encours", "historique", "demoEnvoi"]) await kvDel(k);
   etat.config = { url: url, cle: cle, demo: false };
   await kvSet("config", etat.config);
   etat.bienvenue = true;
+}
+
+function lireLocal(k) {
+  try { return localStorage.getItem(k); } catch (err) { return null; }
+}
+
+function ecrireLocal(k, v) {
+  try { localStorage.setItem(k, v); } catch (err) {}
+}
+
+/** iPadOS se présente comme un Mac : seul l'écran tactile le trahit. */
+function estIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function estInstallee() {
+  return navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+}
+
+function lienPerso() {
+  const c = etat.config;
+  return c && !c.demo ? new URL("./", location.href).href + "#cle=" + c.cle : "";
+}
+
+/**
+ * Sur iPhone, l'app de l'écran d'accueil ne voit pas le stockage de Safari et rien ne
+ * permet de lui passer le code après coup. Safari lit le manifeste au moment de
+ * l'ajout : on lui donne une adresse de départ qui contient le code de l'élève.
+ * Si iOS ignore ce manifeste, le bouton « Coller » de l'écran de configuration prend le relais.
+ * Rien sur Android : le code y passe déjà de Chrome à l'app installée.
+ */
+function manifestPersonnel() {
+  const lien = lienPerso();
+  if (!lien || !estIOS() || estInstallee()) return;
+  const base = new URL("./", location.href).href;
+  const m = {
+    name: "FLX Training", short_name: "FLX Training", lang: "fr",
+    id: base, start_url: lien, scope: base,
+    display: "standalone", background_color: "#f4efe7", theme_color: "#f4efe7",
+    icons: [192, 512].map((t) => ({ src: base + "icon-" + t + ".png", sizes: t + "x" + t, type: "image/png" }))
+  };
+  document.querySelector('link[rel="manifest"]').href =
+    "data:application/manifest+json," + encodeURIComponent(JSON.stringify(m));
 }
 
 // Chrome propose d'installer l'app : on garde la proposition pour un bouton à nous.
@@ -382,6 +436,7 @@ window.addEventListener("appinstalled", () => { etat.installer = null; rendre();
 
 async function rafraichirLocaux() {
   etat.envois = await envoisTous();
+  secoursEnvois(etat.envois);    // le service worker a pu vider la file sans mettre la copie à jour
   etat.videos = new Set(await videoCles());
 }
 
@@ -1323,9 +1378,16 @@ function rendreStatut() {
 }
 
 function vueConfig() {
+  const collerIPhone = estIOS() && estInstallee() ? `
+    <div class="card focus stack">
+      <h3>Dernière étape</h3>
+      <p class="muted sm">Ton accès a été copié avant l'installation. Touche le bouton, puis « Coller » si l'iPhone le demande.</p>
+      <button class="btn block hero-btn" data-a="coller-lien">Coller mon accès</button>
+    </div>` : "";
   return `
     <div class="logo-grand">${LOGO_SVG}</div>
     <div class="top"><div><p class="muted sm">Bienvenue sur</p><h1>FLX Training</h1></div></div>
+    ${collerIPhone}
     <div class="card stack">
       <h3>Pour commencer</h3>
       <p class="muted sm">Scanne le <b>QR code</b> que t'a donné Félix, ou ouvre le <b>lien</b> qu'il t'a envoyé
@@ -1361,6 +1423,15 @@ function vueAccueil() {
     h += `<div class="card stack" style="margin-bottom:12px"><div class="row"><div class="tile">${LOGO_SVG}</div>
       <div class="grow"><h3>Installe FLX Training</h3><p class="xs muted">Une icône sur ton écran d'accueil, en plein écran, même sans réseau.</p></div></div>
       <button class="btn block hero-btn" data-a="installer">${ic("telecharger")}Installer l'app</button></div>`;
+  }
+  if (estIOS() && !estInstallee() && !etat.config.demo) {
+    h += `<div class="card focus stack" style="margin-bottom:12px"><div class="row"><div class="tile">${LOGO_SVG}</div>
+      <div class="grow"><h3>Installe FLX Training</h3><p class="xs muted">Sur iPhone, l'installation se fait à la main, en moins d'une minute.</p></div></div>
+      <button class="btn block hero-btn" data-a="copier-lien">${etat.lienCopie ? "✓ Accès copié" : "1. Copier mon accès"}</button>
+      <p class="sm">2. Touche <b>Partager</b> (le carré avec une flèche, parfois dans le menu « … »).</p>
+      <p class="sm">3. Descends dans la liste (ou touche <b>Plus</b>) jusqu'à <b>Sur l'écran d'accueil</b>, puis <b>Ajouter</b>.</p>
+      <p class="sm">4. Ouvre l'app depuis sa nouvelle <b>icône</b>.</p>
+      <p class="xs muted">Tu ne trouves pas ? Ouvre ce lien dans Safari : WhatsApp, Gmail et les autres apps n'ont pas cette option. Toujours rien : en bas de la liste, <b>Modifier les actions</b>.</p></div>`;
   }
 
   if (!p) {
@@ -2206,6 +2277,7 @@ async function changerConfig(config) {
   await kvSet("config", config);
   await kvDel("programme");
   await kvDel("demoEnvoi");
+  manifestPersonnel();
   allerA("accueil");
   majProgramme(false);
 }
@@ -2228,6 +2300,22 @@ const actions = {
     const c = lireLien(document.getElementById("lien").value);
     if (!c) { toast("Ce n'est pas un lien « …/exec?cle=… » valide."); return; }
     changerConfig(c);
+  },
+  "coller-lien": async () => {
+    let texte = "";
+    try { texte = await navigator.clipboard.readText(); } catch (err) {}
+    const c = lireLien(texte);
+    if (!c) { toast("Accès introuvable : recopie-le depuis ton lien, ou colle-le plus bas.", 5000); return; }
+    changerConfig(c);
+  },
+  "copier-lien": async () => {
+    try {
+      await navigator.clipboard.writeText(lienPerso());
+      etat.lienCopie = true;
+      rendre();
+    } catch (err) {
+      toast("Copie impossible : continue l'installation, ton lien perso servira à la dernière étape.", 5000);
+    }
   },
   "demo": () => changerConfig({ url: "", cle: "", demo: true }),
   "actualiser": () => actualiser(),

@@ -8,14 +8,18 @@
  *
  * Copie de secours : Android a déjà vidé cette base (écran de configuration à la
  * salle, cause exacte inconnue, voir CLAUDE.md). Ce qu'il faut pour repartir
- * sans réseau est donc aussi écrit dans un cache à part (et la config dans le
- * localStorage). Si TOUT le site est vidé, les copies partent aussi : seul
- * navigator.storage.persist() protège de ça (protegerStockage dans app.js).
+ * sans réseau est donc aussi écrit dans un cache à part ET dans le localStorage.
+ * Le 2026-10-31, la base et le cache sont partis ensemble alors que le stockage
+ * était « protégé » : seul le localStorage a survécu. Il garde donc tout sauf les
+ * vidéos (trop lourdes). Si TOUT le site est vidé, les copies partent aussi.
  */
 const DB_NOM = "ma-seance";
 const DB_VERSION = 1;
 const CACHE_SECOURS = "flx-sauvegarde";
-const CLES_SECOURS = ["config", "programme", "historique", "installation", "restaurations"];
+const CLES_SECOURS = ["config", "programme", "historique", "charge", "encours", "sons", "installation", "restaurations"];
+// La séance en cours est écrite à chaque geste, sans attendre : seul le localStorage,
+// synchrone, garantit qu'un abandon passe bien après la dernière sauvegarde.
+const CLES_SANS_CACHE = ["encours"];
 let dbPromesse = null;
 
 function ouvrirDB() {
@@ -70,11 +74,12 @@ const requeteSecours = (k) => new Request("secours/" + k);
 async function secoursEcrire(k, v) {
   if (!CLES_SECOURS.includes(k)) return;
   try {
-    if (k === "config" && typeof localStorage !== "undefined") {
-      if (v === undefined) localStorage.removeItem("config-secours");
-      else localStorage.setItem("config-secours", JSON.stringify(v));
+    if (typeof localStorage !== "undefined") {
+      if (v === undefined) localStorage.removeItem(k + "-secours");
+      else localStorage.setItem(k + "-secours", JSON.stringify(v));
     }
   } catch (err) {}
+  if (CLES_SANS_CACHE.includes(k)) return;
   try {
     const c = await caches.open(CACHE_SECOURS);
     if (v === undefined) await c.delete(requeteSecours(k));
@@ -90,12 +95,43 @@ async function secoursLire(k) {
     if (r) return await r.json();
   } catch (err) {}
   try {
-    if (k === "config" && typeof localStorage !== "undefined") {
-      const t = localStorage.getItem("config-secours");
+    if (typeof localStorage !== "undefined") {
+      const t = localStorage.getItem(k + "-secours");
       if (t) return JSON.parse(t);
     }
   } catch (err) {}
   return undefined;
+}
+
+/** Téléphone déjà installé : ses données n'ont jamais été copiées dans le localStorage. */
+async function secoursCompleter() {
+  if (typeof localStorage === "undefined") return;
+  for (const k of CLES_SECOURS) {
+    let absente = false;
+    try { absente = localStorage.getItem(k + "-secours") === null; } catch (err) {}
+    if (!absente) continue;
+    const v = await kvGet(k);
+    if (v !== undefined) await secoursEcrire(k, v);
+  }
+}
+
+/**
+ * Copie de la file d'envois : c'est la seule trace d'une séance pas encore partie.
+ * Le service worker n'a pas de localStorage : cette copie peut donc garder un envoi
+ * déjà parti, jusqu'à la prochaine ouverture. Sans risque, le serveur ignore un id déjà traité.
+ */
+async function secoursEnvois(liste) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem("envois-secours", JSON.stringify(liste || await envoisTous()));
+  } catch (err) {}
+}
+
+function secoursEnvoisLire() {
+  try {
+    if (typeof localStorage !== "undefined") return JSON.parse(localStorage.getItem("envois-secours")) || [];
+  } catch (err) {}
+  return [];
 }
 
 const videoGet = (yt) => idb("videos", "readonly", (s) => s.get(yt));
@@ -106,5 +142,5 @@ const videosVider = () => idb("videos", "readwrite", (s) => s.clear());
 
 const envoisTous = () => idb("envois", "readonly", (s) => s.getAll())
   .then((l) => l.sort((a, b) => a.cree - b.cree));
-const envoiMettre = (e) => idb("envois", "readwrite", (s) => s.put(e));
-const envoiSupprimer = (id) => idb("envois", "readwrite", (s) => s.delete(id));
+const envoiMettre = (e) => idb("envois", "readwrite", (s) => s.put(e)).then((r) => secoursEnvois().then(() => r));
+const envoiSupprimer = (id) => idb("envois", "readwrite", (s) => s.delete(id)).then((r) => secoursEnvois().then(() => r));
