@@ -1254,6 +1254,9 @@ function bips(moments) {
  * qui est public), relus par ?api=video et gardés dans IndexedDB (kv « son-<yt> »).
  * de / a : passage joué, en secondes. Son absent (démo, pas encore téléchargé) ou
  * réglage coupé : rien, sauf les bips de fin de récup.
+ * Chaque passage est rejoué depuis un petit fichier à lui, de moins de 5 s : essai du
+ * 2026-11-01 sur le téléphone de Melchior, un fichier de 4,5 s baisse la musique de
+ * l'élève le temps du son, un de 8 s la coupe et elle ne repart pas. Garder a - de < 5.
  */
 const SONS = {
   debut: { yt: "0e_-8ShpF1I", de: 1.1, a: 5.6 },            // « Let's get ready to rumble »
@@ -1261,17 +1264,52 @@ const SONS = {
   exo:   { yt: "CAIa0TbirAQ", de: 0, a: 2.6 },              // Smash Bros « Un nouveau challenger arrive ! »
   fin:   { yt: "Y5H4Das52wk", de: 0.05, a: 4.4 }            // Fortnite « Victory Royale »
 };
-const tampons = {};    // moment → AudioBuffer décodé
+const lecteurs = {};   // moment → { el: <audio> du passage, duree }
 let sonDecompte = null; // « 3, 2, 1, GO » en cours, coupé si la récup change (Passer, ±15 s)
 
-/** Décode les sons déjà sur le téléphone (il faut l'AudioContext, donc un geste). */
+/**
+ * Passage [de, a] d'un son décodé, en fichier WAV. Fondu de sortie : le passage est
+ * coupé au milieu d'un son, sans « clic ».
+ * @return {?{wav: ArrayBuffer, duree: number}} null si le son s'arrête avant le passage
+ */
+function extraitWav(b, de, a) {
+  const taux = b.sampleRate, voies = b.numberOfChannels;
+  const debut = Math.round(de * taux);
+  const n = Math.min(Math.round(a * taux), b.length) - debut;
+  if (n <= 0.05 * taux) return null;
+
+  const wav = new ArrayBuffer(44 + n * voies * 2), d = new DataView(wav);
+  const texte = (o, s) => { for (let i = 0; i < s.length; i++) d.setUint8(o + i, s.charCodeAt(i)); };
+  texte(0, "RIFF"); d.setUint32(4, 36 + n * voies * 2, true); texte(8, "WAVEfmt ");
+  d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, voies, true);
+  d.setUint32(24, taux, true); d.setUint32(28, taux * voies * 2, true);
+  d.setUint16(32, voies * 2, true); d.setUint16(34, 16, true);
+  texte(36, "data"); d.setUint32(40, n * voies * 2, true);
+
+  const fondu = Math.round(0.25 * taux);
+  for (let v = 0; v < voies; v++) {
+    const c = b.getChannelData(v);
+    for (let i = 0; i < n; i++) {
+      const x = Math.max(-1, Math.min(1, c[debut + i])) * Math.min(1, (n - 1 - i) / fondu);
+      d.setInt16(44 + (i * voies + v) * 2, x * 32767, true);
+    }
+  }
+  return { wav: wav, duree: n / taux };
+}
+
+/** Découpe les sons déjà sur le téléphone (décoder demande l'AudioContext, donc un geste). */
 async function preparerSons() {
   if (!audio) return;
   for (const m of Object.keys(SONS)) {
-    if (tampons[m]) continue;
+    if (lecteurs[m]) continue;
     try {
       const blob = await kvGet("son-" + SONS[m].yt);
-      if (blob) tampons[m] = await audio.decodeAudioData(await blob.arrayBuffer());
+      if (!blob) continue;
+      const x = extraitWav(await audio.decodeAudioData(await blob.arrayBuffer()), SONS[m].de, SONS[m].a);
+      if (!x) continue;
+      const el = new Audio(URL.createObjectURL(new Blob([x.wav], { type: "audio/wav" })));
+      el.preload = "auto";
+      lecteurs[m] = { el: el, duree: x.duree };
     } catch (err) { /* illisible : on fera sans */ }
   }
 }
@@ -1294,24 +1332,16 @@ async function telechargerSons() {
 
 /**
  * Joue un moment de la bande-son. « position » : où commencer dans le passage (s),
- * pour caler le compte à rebours. Renvoie la source, ou null si rien n'a joué.
+ * pour caler le compte à rebours. Renvoie de quoi l'arrêter, ou null si rien n'a joué.
  */
 function jouerSon(moment, position) {
-  const s = SONS[moment], b = tampons[moment];
-  if (!etat.sons || !audio || !b) return null;
-  const de = s.de + Math.max(0, position || 0);
-  const duree = Math.min(s.a, b.duration) - de;
-  if (duree <= 0.05) return null;
-  const src = audio.createBufferSource();
-  src.buffer = b;
-  // Fondu de sortie : le passage est coupé au milieu d'un son, sans « clic ».
-  const g = audio.createGain(), t = audio.currentTime;
-  g.gain.setValueAtTime(1, t);
-  g.gain.setValueAtTime(1, t + Math.max(0, duree - 0.25));
-  g.gain.linearRampToValueAtTime(0.0001, t + duree);
-  src.connect(g); g.connect(audio.destination);
-  src.start(t, de, duree);
-  return src;
+  const l = lecteurs[moment];
+  if (!etat.sons || !l) return null;
+  const pos = Math.max(0, position || 0);
+  if (l.duree - pos <= 0.05) return null;
+  l.el.currentTime = pos;
+  l.el.play().catch(() => { /* refusé par le navigateur : on fera sans */ });
+  return { stop: () => l.el.pause() };
 }
 
 function couperDecompte() {
