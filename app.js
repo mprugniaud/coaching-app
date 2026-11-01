@@ -1459,7 +1459,7 @@ function vueAccueil() {
       <div class="grow"><h3>Installe FLX Training</h3><p class="xs muted">Sur iPhone, l'installation se fait à la main, en moins d'une minute.</p></div></div>
       <button class="btn block hero-btn" data-a="copier-lien">${etat.lienCopie ? "✓ Accès copié" : "1. Copier mon accès"}</button>
       <p class="sm">2. Touche <b>Partager</b> (le carré avec une flèche, parfois dans le menu « … »).</p>
-      <p class="sm">3. Descends dans la liste (ou touche <b>Plus</b>) jusqu'à <b>Sur l'écran d'accueil</b>, puis <b>Ajouter</b>.</p>
+      <p class="sm">3. Touche <b>En voir plus</b> (ou <b>Plus</b>), puis <b>Sur l'écran d'accueil</b>, puis <b>Ajouter</b>.</p>
       <p class="sm">4. Ouvre l'app depuis sa nouvelle <b>icône</b>.</p>
       <p class="xs muted">Tu ne trouves pas ? Ouvre ce lien dans Safari : WhatsApp, Gmail et les autres apps n'ont pas cette option. Toujours rien : en bas de la liste, <b>Modifier les actions</b>.</p></div>`;
   }
