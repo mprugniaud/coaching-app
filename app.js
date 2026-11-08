@@ -204,6 +204,20 @@ function poidsPrevu(charge) {
   return seul ? num(seul[1]) : null;
 }
 
+/**
+ * Colonne Poids à afficher même sans poids chiffré : Félix écrit parfois une consigne
+ * (« Vise le poids pour RPE 8 », « Lourd »). PDC, Facile, Zone 1–2, Progressif : non.
+ */
+function poidsANoter(charge) {
+  return poidsPrevu(charge) !== null || /poids|charge|rpe|rir|lourd|halt[eè]re|barre|\bkb\b|kettle|lest|%/i.test(charge || "");
+}
+
+/** Dernier poids lu dans un commentaire de la feuille : « S1–S3 : 30 kg · S4 : non faite » → 30. */
+function dernierPoids(texte) {
+  const l = [...String(texte || "").matchAll(/(\d+(?:[.,]\d+)?)\s*kg/gi)];
+  return l.length ? Number(l[l.length - 1][1].replace(",", ".")) : null;
+}
+
 /** Reps (ou durée) prévues : « 7/côté » → 7 ; « 35 s/côté » → 35 s ; « 8 min » → 8 min. */
 function repsPrevues(reps) {
   const t = String(reps || "");
@@ -228,6 +242,7 @@ function fmtReps(x, n) {
 /* ============================== DÉMARRAGE ================================ */
 
 async function demarrer() {
+  sonsMelanges();   // avant le moindre son de la page
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
     // Une nouvelle version vient de s'installer : on recharge pour l'afficher,
@@ -789,11 +804,16 @@ function historique(nom, onglet) {
 function nouvelleSeance(s, onglet) {
   const exos = s.exos.map((x) => {
     const poids = s.type === "salle" ? poidsPrevu(x.charge) : null;
+    const libre = s.type === "salle" && poids === null && poidsANoter(x.charge);
+    // Poids non chiffré : on part de celui noté la fois d'avant (commentaire de la feuille).
+    const h = libre ? historique(x.nom, onglet) : null;
+    const depart = poids !== null ? poids : h ? dernierPoids(h.x.commentaire) : null;
     const reps = repsPrevues(x.reps);
     return Object.assign({}, x, {
       poidsPrevu: poids,
+      avecPoids: poids !== null || libre,
       repsPrevues: reps,
-      sets: Array.from({ length: x.nbSeries || 1 }, () => ({ fait: false, poids: poids, reps: reps ? reps.n : null })),
+      sets: Array.from({ length: x.nbSeries || 1 }, () => ({ fait: false, poids: depart, reps: reps ? reps.n : null })),
       saute: false, raison: "", rpe: null, commentaire: ""
     });
   });
@@ -841,7 +861,8 @@ function apresSerie(s) {
 function ecartSerie(x, se, complet) {
   const parts = [];
   if (x.repsPrevues && se.reps !== null && (complet || se.reps !== x.repsPrevues.n)) parts.push(fmtReps(x, se.reps));
-  if (x.poidsPrevu !== null && se.poids !== null && (complet || se.poids !== x.poidsPrevu)) parts.push(fmtNum(se.poids) + " kg");
+  // Pas de poids chiffré au programme : le poids noté est toujours écrit (c'est ce que Félix veut lire).
+  if (se.poids !== null && (complet || x.poidsPrevu === null || se.poids !== x.poidsPrevu)) parts.push(fmtNum(se.poids) + " kg");
   return parts.join(" @ ");
 }
 
@@ -1213,8 +1234,19 @@ function finRepos() {
   document.body.classList.remove("avec-repos");
 }
 
+/**
+ * iPhone (Safari 16.4+, et Chrome iOS qui a le même moteur) : par défaut, le moindre
+ * son d'une page coupe Spotify / YouTube Music. « ambient » les mélange à la musique ;
+ * contrepartie, le bouton silencieux coupe nos sons. Android n'a pas cette API (et la
+ * musique y continue déjà, avec des passages de moins de 5 s).
+ */
+function sonsMelanges() {
+  try { if (navigator.audioSession) navigator.audioSession.type = "ambient"; } catch (err) { /* tant pis */ }
+}
+
 /** Le son n'est permis qu'après un geste : on prépare l'AudioContext au clic. */
 function activerSon() {
+  sonsMelanges();
   try {
     if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
     if (audio.state === "suspended") audio.resume();
@@ -1804,12 +1836,12 @@ function carteExo(x, i, lettre) {
   const chips = chipsExo(x);
   const hist = historiqueExo(x, S.onglet);
 
-  const avecPoids = x.poidsPrevu !== null;
+  const avecPoids = !!x.avecPoids || x.poidsPrevu !== null;
   const avecReps = !!x.repsPrevues;
   const enTemps = avecReps && !!x.repsPrevues.unite;
   const colReps = !avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps";
   const lignes = x.sets.map((se, s) => {
-    const poids = avecPoids ? stepper(i, s, "poids", se.poids, se.poids !== x.poidsPrevu) : "";
+    const poids = avecPoids ? stepper(i, s, "poids", se.poids, x.poidsPrevu !== null && se.poids !== x.poidsPrevu) : "";
     const reps = avecReps ? stepper(i, s, "reps", se.reps, se.reps !== x.repsPrevues.n)
                           : `<div class="stepper"><span class="fixe">${esc(x.reps || "—")}</span></div>`;
     const debut = enTemps && !se.fait
@@ -1891,6 +1923,7 @@ function vueMenu() {
   return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
     <div class="poignee"></div><div class="titre">${esc(x.nom)}</div>
     <button data-a="serie-plus" data-i="${etat.menu}">${ic("plus")}Ajouter une série</button>
+    ${!x.saute && !x.avecPoids && x.poidsPrevu === null ? `<button data-a="noter-poids" data-i="${etat.menu}">${ic("plus")}Noter un poids</button>` : ""}
     ${x.lien && etat.enLigne ? `<button data-a="youtube" data-i="${etat.menu}">${ic("lien")}Voir sur YouTube</button>` : ""}
     ${x.saute ? `<button data-a="reprendre-exo" data-i="${etat.menu}">${ic("droite")}Finalement je le fais</button>`
               : `<button class="danger" data-a="sauter" data-i="${etat.menu}">${ic("sauter")}Sauter l'exercice</button>`}
@@ -2004,7 +2037,9 @@ function vueReglages() {
         <p class="xs muted trunc">${c.demo ? "Démo" : esc(c.url.replace(/^https:\/\//, "")) + "?cle=" + esc(c.cle.slice(0, 4)) + "…"}</p></div>
         <button class="btn sm outline" data-a="changer-lien">${c.demo ? "Quitter la démo" : "Changer"}</button></div>
       <div class="item"><div class="grow"><p style="font-weight:500">Sons de séance</p>
-        <p class="xs muted">Ready to rumble, 3-2-1 GO, nouveau challenger, Victory Royale</p></div>
+        <p class="xs muted">Ready to rumble, 3-2-1 GO, nouveau challenger, Victory Royale</p>
+        ${estIOS() ? `<p class="xs subtle">${navigator.audioSession ? "iPhone : ta musique continue, mais le bouton silencieux coupe ces sons."
+          : "iPhone : ton iOS est trop ancien, ces sons coupent ta musique. Coupe-les si tu écoutes de la musique."}</p>` : ""}</div>
         <button class="btn sm ${etat.sons ? "" : "outline"}" data-a="sons">${etat.sons ? "Activés" : "Coupés"}</button></div>
       <div class="item"><div class="grow"><p style="font-weight:500">Vidéos sur le téléphone : ${etat.videos.size}</p>
         <p class="xs muted" id="stockage"></p></div>
@@ -2516,6 +2551,10 @@ const actions = {
     const x = etat.seance.exos[d.i];
     const der = x.sets[x.sets.length - 1] || { poids: x.poidsPrevu, reps: x.repsPrevues && x.repsPrevues.n };
     x.sets.push({ fait: false, poids: der.poids, reps: der.reps });
+    sauver(); fermerMenuOuRendre();
+  },
+  "noter-poids": (d) => {
+    etat.seance.exos[d.i].avecPoids = true;
     sauver(); fermerMenuOuRendre();
   },
   "menu": (d) => { etat.menu = d.i; history.pushState({ vue: etat.vue, menu: true }, ""); rendre(); },
