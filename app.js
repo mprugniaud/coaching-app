@@ -229,8 +229,21 @@ function repsPrevues(reps) {
   let unite = "";
   if (ms) unite = "s";
   else if (m[2]) unite = /^m/i.test(m[2]) || m[2] === "'" ? "min" : "s";
-  return { n: ms ? Number(ms[1]) * 60 + Number(ms[2]) : Number(m[1]), unite: unite,
-           cote: !!unite && /c[oô]t[ée]|jambe|bras/i.test(t) };
+  const r = { n: ms ? Number(ms[1]) * 60 + Number(ms[2]) : Number(m[1]), unite: unite,
+               cote: !!unite && /c[oô]t[ée]|jambe|bras/i.test(t) };
+  // « 15 s iso + 6/côté », « 45 s + 10 montées », « 4 min + 1 min à fond » : une durée,
+  // PUIS une 2e étape. Seulement quand la case commence par une durée : « 8/côté + 2 s d'iso »
+  // ou « 5 + 3 s en bas » = un maintien à chaque rep, et « 8 + 8 » / « 10 + 15 » = deux exos
+  // sur une ligne (relevé de tous les classeurs, 2026-11-14) ; ceux-là ne changent pas.
+  const plus = unite ? /\+\s*(\d.*)$/.exec(t) : null;
+  const suite = plus ? repsPrevues(plus[1]) : null;
+  if (suite) {
+    const texte = plus[1].trim();
+    // « 6/côté » → « 6 reps » (le côté vaut pour toute la série, il est déjà dans r.cote).
+    const court = texte.replace(/\s*(\/|par)\s*(c[oô]t[ée]|jambe|bras).*$/i, "").trim();
+    r.puis = { n: suite.n, unite: suite.unite, texte: texte, libelle: /^\d+$/.test(court) ? court + " reps" : court };
+  }
+  return r;
 }
 
 function fmtReps(x, n) {
@@ -1117,7 +1130,7 @@ function lancerChrono(i, s) {
   const n = x.sets[s].reps > 0 ? x.sets[s].reps : x.repsPrevues.n;
   finRepos();
   S.chrono = { i: i, s: s, phase: "prepa", cote: 0, nbCotes: x.repsPrevues.cote ? 2 : 1,
-               duree: Math.round(x.repsPrevues.unite === "min" ? n * 60 : n),
+               duree: Math.round(x.repsPrevues.unite === "min" ? n * 60 : n), puis: x.repsPrevues.puis || null,
                fin: Date.now() + CHRONO_PREPA * 1000, total: CHRONO_PREPA };
   sauver();
   afficherRepos();
@@ -1129,18 +1142,40 @@ function lancerChrono(i, s) {
  * @return {boolean} vrai quand la série est finie
  */
 function avancerChrono(C) {
-  while (Date.now() >= C.fin) {
+  // Phase « reps » (« + 6/côté ») : pas de minuteur, on attend le bouton « Fait ».
+  while (C.phase !== "reps" && Date.now() >= C.fin) {
     const aLHeure = Date.now() - C.fin < 1500;
     if (C.phase === "prepa") {
       if (aLHeure) signalCourt(C.avecSon);
       Object.assign(C, { phase: "effort", fin: C.fin + C.duree * 1000, total: C.duree, decompte: false, avecSon: false });
-    } else if (C.cote < C.nbCotes - 1) {
+    } else if (C.phase === "effort" && C.puis) {
       if (aLHeure) signalCourt(false);
-      Object.assign(C, { phase: "prepa", cote: C.cote + 1, fin: C.fin + CHRONO_COTE * 1000, total: CHRONO_COTE });
-    } else return true;
+      const d = C.puis.unite ? Math.round(C.puis.unite === "min" ? C.puis.n * 60 : C.puis.n) : 0;
+      Object.assign(C, d ? { phase: "puis", fin: C.fin + d * 1000, total: d } : { phase: "reps" });
+    } else if (passageSuivant(C, C.fin, aLHeure)) return true;
     sauver();
   }
   return false;
+}
+
+/**
+ * Fin d'un passage : on change de côté s'il en reste un, sinon la série est finie.
+ * @return {boolean} vrai quand la série est finie
+ */
+function passageSuivant(C, depuis, signal) {
+  if (C.cote >= C.nbCotes - 1) return true;
+  if (signal) signalCourt(false);
+  Object.assign(C, { phase: "prepa", cote: C.cote + 1, fin: depuis + CHRONO_COTE * 1000, total: CHRONO_COTE });
+  return false;
+}
+
+/** « Fait » à la fin des reps d'une 2e étape (« 15 s iso + 6/côté ») : côté suivant ou fin de série. */
+function repsFaites() {
+  const S = etat.seance, C = S.chrono;
+  if (!C || C.phase !== "reps") return;
+  if (passageSuivant(C, Date.now(), false)) { terminerChrono(false); return; }
+  sauver();
+  afficherRepos();
 }
 
 function afficherChrono() {
@@ -1152,9 +1187,13 @@ function afficherChrono() {
 
   const x = S.exos[C.i];
   const prepa = C.phase === "prepa";
+  const reps = C.phase === "reps";
+  const cote = C.nbCotes > 1 ? "Côté " + (C.cote + 1) + " / " + C.nbCotes : "";
   const titre = prepa ? (C.cote ? "Change de côté" : "Prépare-toi")
-    : C.nbCotes > 1 ? "Côté " + (C.cote + 1) + " / " + C.nbCotes : "C'est parti";
+    : C.phase === "effort" ? cote || "C'est parti"
+    : [cote, reps ? "Enchaîne" : "Puis " + C.puis.texte].filter(Boolean).join(" · ");
   const boutons = prepa ? `<button class="btn outline" data-a="chrono-annuler">Annuler</button>`
+    : reps ? `<button class="btn outline" data-a="chrono-annuler">Annuler</button><button class="btn" data-a="chrono-reps">Fait</button>`
     : (C.pause !== undefined
         ? `<button class="btn outline" data-a="chrono-annuler">Annuler</button><button class="btn outline" data-a="chrono-reprendre">Reprendre</button>`
         : `<button class="btn outline" data-a="chrono-pause">Pause</button>`) +
@@ -1170,6 +1209,13 @@ function afficherChrono() {
     <div class="row">${boutons}</div>`;
   const $t = $repos.querySelector(".temps");
   const $p = $repos.querySelector(".prog");
+  if (reps) {
+    // Pas de minuteur : l'anneau plein et ce qu'il reste à faire, en clair.
+    $t.textContent = C.puis.libelle;
+    $t.style.fontSize = C.puis.libelle.length > 7 ? "20px" : "28px";
+    $t.style.textAlign = "center";
+    return;
+  }
   const maj = () => {
     if (C.pause === undefined) {
       const phase = C.phase, cote = C.cote;
@@ -1214,8 +1260,11 @@ function arreterChrono() {
   const S = etat.seance, C = S.chrono;
   const x = S.exos[C.i];
   const resteMs = C.pause !== undefined ? C.pause : C.fin - Date.now();
-  const tenu = Math.max(1, Math.round(C.duree - resteMs / 1000));
-  x.sets[C.s].reps = x.repsPrevues.unite === "min" ? Math.round(tenu / 6) / 10 : tenu;
+  // Le temps tenu n'a de sens que pendant l'effort chronométré (pas pendant la 2e étape).
+  if (C.phase === "effort") {
+    const tenu = Math.max(1, Math.round(C.duree - resteMs / 1000));
+    x.sets[C.s].reps = x.repsPrevues.unite === "min" ? Math.round(tenu / 6) / 10 : tenu;
+  }
   terminerChrono(false);
 }
 
@@ -1840,7 +1889,8 @@ function carteExo(x, i, lettre) {
   const avecPoids = !!x.avecPoids || x.poidsPrevu !== null;
   const avecReps = !!x.repsPrevues;
   const enTemps = avecReps && !!x.repsPrevues.unite;
-  const colReps = !avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps";
+  const colReps = (!avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps")
+    + (avecReps && x.repsPrevues.puis ? " + " + x.repsPrevues.puis.texte : "");
   const lignes = x.sets.map((se, s) => {
     const poids = avecPoids ? stepper(i, s, "poids", se.poids, x.poidsPrevu !== null && se.poids !== x.poidsPrevu) : "";
     const reps = avecReps ? stepper(i, s, "reps", se.reps, se.reps !== x.repsPrevues.n)
@@ -2701,6 +2751,7 @@ const actions = {
     sauver(); afficherRepos();
   },
   "chrono-fin": () => { if (etat.seance.chrono) arreterChrono(); },
+  "chrono-reps": () => repsFaites(),
   "chrono-annuler": () => { if (etat.seance.chrono) annulerChrono(); }
 };
 
