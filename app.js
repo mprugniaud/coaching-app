@@ -1057,6 +1057,7 @@ let verrouEcran = null;
 
 function demarrerRepos(sec, suite) {
   etat.seance.repos = { fin: Date.now() + sec * 1000, total: sec, suite: suite || "", sonne: false };
+  pauserVideos();
   sauver();
   afficherRepos();
 }
@@ -1930,8 +1931,44 @@ function vueMenu() {
     <button data-a="menu-fermer">${ic("x")}Annuler</button></div></div>`;
 }
 
+/**
+ * Où est affichée la vidéo : un exo de la séance ou un exo de l'aperçu. Changer
+ * d'endroit relance la vidéo une fois ; un simple redessin (série cochée) non.
+ */
+function contexteVideo() {
+  if (etat.vue === "seance" && etat.seance) return "seance-" + etat.seance.debut + "-" + etat.seance.etape;
+  if (etat.vue === "apercuExo") return "apercu-" + etat.apercuExo;
+  return etat.vue;
+}
+
+/**
+ * Que faire d'une vidéo qu'on (re)pose à l'écran (2026-11-14, la boucle usait la
+ * batterie, écran allumé toute la séance, et attirait l'œil pour rien) :
+ * "debut" = nouvel endroit, une lecture depuis le début ; "reprendre" = même
+ * endroit, la lecture en cours continue ; "rien" = finie, mise en pause par
+ * l'élève ou par la récup : elle reste arrêtée, ▶ pour la revoir.
+ */
+function lectureVideo(v, contexte) {
+  if (v.contexte !== contexte) return "debut";
+  return v.enCours && !v.ended ? "reprendre" : "rien";
+}
+
+/** Récup lancée : la vidéo de l'exo, déjà vue, s'arrête. */
+function pauserVideos() {
+  Object.values(etat.videoEls).forEach((v) => { if (v.enCours) { v.enCours = false; v.pause(); } });
+}
+
+let dernierBranchement = 0, dernierEndroit = "", passage = 0;
+
 /** Les <video> survivent aux rendus : la lecture ne repart pas à chaque geste. */
 async function brancherVideos() {
+  dernierBranchement = Date.now();
+  // Le n° de passage distingue un retour sur un exo (relancé une fois) d'un
+  // simple redessin : sans lui, la vidéo de l'exo 1 garderait « exo 1 » comme
+  // endroit pendant qu'on regarde l'exo 2, et ne repartirait pas au retour.
+  const endroit = contexteVideo();
+  if (endroit !== dernierEndroit) { passage++; dernierEndroit = endroit; }
+  const contexte = endroit + "#" + passage;
   for (const place of $app.querySelectorAll(".vplace")) {
     const yt = place.dataset.yt;
     let v = etat.videoEls[yt];
@@ -1941,13 +1978,24 @@ async function brancherVideos() {
       v = etat.videoEls[yt];
       if (!v) {
         v = document.createElement("video");
-        Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: true, controls: true });
+        Object.assign(v, { muted: true, loop: false, playsInline: true, autoplay: false, controls: true, preload: "auto" });
         v.addEventListener("error", () => videoIllisible(yt, v));
+        // enCours = la lecture doit survivre aux redessins. ▶ de l'élève la remet ;
+        // fin de vidéo ou pause de l'élève l'enlève. Une pause juste après un
+        // redessin vient du navigateur (élément retiré puis remis), pas de l'élève.
+        v.addEventListener("play", () => { v.enCours = true; });
+        v.addEventListener("ended", () => { v.enCours = false; });
+        v.addEventListener("pause", () => { if (Date.now() - dernierBranchement > 500) v.enCours = false; });
         v.src = URL.createObjectURL(rec.blob);
         etat.videoEls[yt] = v;
       }
     }
-    if (place.isConnected) { place.replaceWith(v); v.play().catch(() => {}); }
+    if (!place.isConnected) continue;
+    place.replaceWith(v);
+    const quoi = lectureVideo(v, contexte);
+    v.contexte = contexte;
+    if (quoi === "debut") { v.currentTime = 0; v.enCours = true; }
+    if (quoi !== "rien") v.play().catch(() => { v.enCours = false; });
   }
 }
 
