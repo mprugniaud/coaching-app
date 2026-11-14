@@ -202,6 +202,9 @@ svg.i.anneau .fond { stroke: var(--border); }
 .sets.sans-poids .tete, .sets.sans-poids .set { grid-template-columns: 30px 1fr 46px; }
 .sets.avec-chrono .tete, .sets.avec-chrono .set { grid-template-columns: 40px 1fr 1fr 46px; }
 .sets.avec-chrono.sans-poids .tete, .sets.avec-chrono.sans-poids .set { grid-template-columns: 40px 1fr 46px; }
+/* Poids + durée + 2e étape (« 15 s iso + 6/côté » avec une charge) : trois valeurs. */
+.sets.trois .tete, .sets.trois .set { grid-template-columns: 30px 1fr 1fr 1fr 46px; }
+.sets.avec-chrono.trois .tete, .sets.avec-chrono.trois .set { grid-template-columns: 40px 1fr 1fr 1fr 46px; }
 .play-serie { width: 40px; height: 40px; border-radius: 99px; border: 0; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; cursor: pointer; }
 .play-serie svg { fill: currentColor; }
 .sets .tete { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--fg-subtle); padding: 2px 0 8px; text-align: center; }

@@ -246,6 +246,19 @@ function repsPrevues(reps) {
   return r;
 }
 
+/** Valeur de la 2e étape (« 15 s iso + 6/côté ») : « 6 reps », « 1 min ». */
+function fmtPuis(x, n) {
+  const u = x.repsPrevues.puis.unite;
+  return fmtNum(n) + (u ? " " + u : " reps");
+}
+
+/** En-tête de la colonne de la 2e étape : « Reps », « Montées », « Minutes ». */
+function colPuis(p) {
+  if (p.unite) return p.unite === "s" ? "Secondes" : "Minutes";
+  const mot = p.libelle.replace(/^\d+\s*/, "");
+  return mot.charAt(0).toUpperCase() + mot.slice(1);
+}
+
 function fmtReps(x, n) {
   const u = x.repsPrevues ? x.repsPrevues.unite : "";
   return n + (u ? " " + u : " reps");
@@ -826,7 +839,8 @@ function nouvelleSeance(s, onglet) {
       poidsPrevu: poids,
       avecPoids: poids !== null || libre,
       repsPrevues: reps,
-      sets: Array.from({ length: x.nbSeries || 1 }, () => ({ fait: false, poids: depart, reps: reps ? reps.n : null })),
+      sets: Array.from({ length: x.nbSeries || 1 }, () => Object.assign({ fait: false, poids: depart, reps: reps ? reps.n : null },
+        reps && reps.puis ? { puis: reps.puis.n } : {})),
       saute: false, raison: "", rpe: null, commentaire: ""
     });
   });
@@ -873,7 +887,11 @@ function apresSerie(s) {
 /** Écart d'une série au programme : « 3 reps @ 30 kg », « 30 kg », ou "". */
 function ecartSerie(x, se, complet) {
   const parts = [];
-  if (x.repsPrevues && se.reps !== null && (complet || se.reps !== x.repsPrevues.n)) parts.push(fmtReps(x, se.reps));
+  const p = x.repsPrevues && x.repsPrevues.puis;
+  if (p && se.reps !== null && se.puis != null) {
+    // Les deux étapes ensemble, pour que Félix lise la série entière : « 11 s + 4 reps ».
+    if (complet || se.reps !== x.repsPrevues.n || se.puis !== p.n) parts.push(fmtReps(x, se.reps) + " + " + fmtPuis(x, se.puis));
+  } else if (x.repsPrevues && se.reps !== null && (complet || se.reps !== x.repsPrevues.n)) parts.push(fmtReps(x, se.reps));
   // Pas de poids chiffré au programme : le poids noté est toujours écrit (c'est ce que Félix veut lire).
   if (se.poids !== null && (complet || x.poidsPrevu === null || se.poids !== x.poidsPrevu)) parts.push(fmtNum(se.poids) + " kg");
   return parts.join(" @ ");
@@ -909,7 +927,8 @@ function commentaireExo(x) {
 function resumeSets(x) {
   if (x.saute) return "";
   const txt = (se) => !se.fait ? "✗"
-    : [x.repsPrevues && se.reps !== null ? fmtReps(x, se.reps) : "", se.poids !== null ? fmtNum(se.poids) + " kg" : ""]
+    : [x.repsPrevues && se.reps !== null ? fmtReps(x, se.reps) + (se.puis != null && x.repsPrevues.puis ? " + " + fmtPuis(x, se.puis) : "") : "",
+       se.poids !== null ? fmtNum(se.poids) + " kg" : ""]
         .filter(Boolean).join(" @ ") || "✓";
   const l = x.sets.map(txt);
   if (l.every((t) => t === "✗")) return "aucune série";
@@ -1130,10 +1149,18 @@ function lancerChrono(i, s) {
   const n = x.sets[s].reps > 0 ? x.sets[s].reps : x.repsPrevues.n;
   finRepos();
   S.chrono = { i: i, s: s, phase: "prepa", cote: 0, nbCotes: x.repsPrevues.cote ? 2 : 1,
-               duree: Math.round(x.repsPrevues.unite === "min" ? n * 60 : n), puis: x.repsPrevues.puis || null,
+               duree: Math.round(x.repsPrevues.unite === "min" ? n * 60 : n), puis: puisSerie(x, x.sets[s]),
                fin: Date.now() + CHRONO_PREPA * 1000, total: CHRONO_PREPA };
   sauver();
   afficherRepos();
+}
+
+/** 2e étape avec la valeur de la série (modifiable) : « 4 reps » si l'élève a mis 4. */
+function puisSerie(x, se) {
+  const p = x.repsPrevues.puis;
+  if (!p) return null;
+  const n = se.puis != null ? se.puis : p.n;
+  return Object.assign({}, p, { n: n, libelle: p.libelle.replace(/^\d+/, fmtNum(n)) });
 }
 
 /**
@@ -1150,12 +1177,17 @@ function avancerChrono(C) {
       Object.assign(C, { phase: "effort", fin: C.fin + C.duree * 1000, total: C.duree, decompte: false, avecSon: false });
     } else if (C.phase === "effort" && C.puis) {
       if (aLHeure) signalCourt(false);
-      const d = C.puis.unite ? Math.round(C.puis.unite === "min" ? C.puis.n * 60 : C.puis.n) : 0;
-      Object.assign(C, d ? { phase: "puis", fin: C.fin + d * 1000, total: d } : { phase: "reps" });
+      etapeApresEffort(C, C.fin);
     } else if (passageSuivant(C, C.fin, aLHeure)) return true;
     sauver();
   }
   return false;
+}
+
+/** Fin de l'effort chronométré : reps à faire (« Fait ») ou 2e durée chronométrée. */
+function etapeApresEffort(C, depuis) {
+  const d = C.puis.unite ? Math.round(C.puis.unite === "min" ? C.puis.n * 60 : C.puis.n) : 0;
+  Object.assign(C, d ? { phase: "puis", fin: depuis + d * 1000, total: d } : { phase: "reps" });
 }
 
 /**
@@ -1197,7 +1229,7 @@ function afficherChrono() {
     : (C.pause !== undefined
         ? `<button class="btn outline" data-a="chrono-annuler">Annuler</button><button class="btn outline" data-a="chrono-reprendre">Reprendre</button>`
         : `<button class="btn outline" data-a="chrono-pause">Pause</button>`) +
-      `<button class="btn" data-a="chrono-fin">Terminer</button>`;
+      `<button class="btn" data-a="chrono-fin">${(C.phase === "effort" && C.puis) || C.cote < C.nbCotes - 1 ? "Suivant" : "Terminer"}</button>`;
   const P = 2 * Math.PI * 66;
   $repos.classList.remove("fini");
   $repos.innerHTML = `
@@ -1265,7 +1297,15 @@ function arreterChrono() {
     const tenu = Math.max(1, Math.round(C.duree - resteMs / 1000));
     x.sets[C.s].reps = x.repsPrevues.unite === "min" ? Math.round(tenu / 6) / 10 : tenu;
   }
-  terminerChrono(false);
+  // Une étape ou un côté reste : on y passe (retour de Thomas C, 2026-11-14 : « Terminer »
+  // pendant l'iso clôturait la série, fentes et côté 2 compris).
+  const etait = C.phase;
+  delete C.pause;
+  if (etait === "effort" && C.puis) etapeApresEffort(C, Date.now());
+  else if (passageSuivant(C, Date.now(), false)) { terminerChrono(false); return; }
+  couperDecompte();
+  sauver();
+  afficherRepos();
 }
 
 function annulerChrono() {
@@ -1889,12 +1929,14 @@ function carteExo(x, i, lettre) {
   const avecPoids = !!x.avecPoids || x.poidsPrevu !== null;
   const avecReps = !!x.repsPrevues;
   const enTemps = avecReps && !!x.repsPrevues.unite;
-  const colReps = (!avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps")
-    + (avecReps && x.repsPrevues.puis ? " + " + x.repsPrevues.puis.texte : "");
+  const colReps = !avecReps ? "Reps" : x.repsPrevues.unite === "s" ? "Secondes" : x.repsPrevues.unite === "min" ? "Minutes" : "Reps";
+  // 2e étape (« 15 s iso + 6/côté ») : sa propre colonne, modifiable série par série.
+  const p = avecReps ? x.repsPrevues.puis : null;
   const lignes = x.sets.map((se, s) => {
     const poids = avecPoids ? stepper(i, s, "poids", se.poids, x.poidsPrevu !== null && se.poids !== x.poidsPrevu) : "";
-    const reps = avecReps ? stepper(i, s, "reps", se.reps, se.reps !== x.repsPrevues.n)
-                          : `<div class="stepper"><span class="fixe">${esc(x.reps || "—")}</span></div>`;
+    const reps = (avecReps ? stepper(i, s, "reps", se.reps, se.reps !== x.repsPrevues.n)
+                           : `<div class="stepper"><span class="fixe">${esc(x.reps || "—")}</span></div>`)
+      + (p ? stepper(i, s, "puis", se.puis == null ? p.n : se.puis, se.puis != null && se.puis !== p.n) : "");
     const debut = enTemps && !se.fait
       ? `<button class="play-serie" data-a="chrono" data-i="${i}" data-s="${s}" aria-label="Lancer le chrono de la série ${s + 1}">${ic("lecture", "sm")}</button>`
       : `<span class="n">${s + 1}</span>`;
@@ -1916,8 +1958,8 @@ function carteExo(x, i, lettre) {
     <div class="chips">${chips}</div>
     ${x.consigne ? `<p class="consigne">${esc(x.consigne)}</p>` : ""}
     ${hist}
-    <div class="sets ${avecPoids ? "" : "sans-poids"} ${enTemps ? "avec-chrono" : ""}">
-      <div class="tete"><span>#</span>${avecPoids ? "<span>Poids (kg)</span>" : ""}<span>${colReps}</span><span></span></div>
+    <div class="sets ${avecPoids ? (p ? "trois" : "") : p ? "" : "sans-poids"} ${enTemps ? "avec-chrono" : ""}">
+      <div class="tete"><span>#</span>${avecPoids ? "<span>Poids (kg)</span>" : ""}<span>${colReps}</span>${p ? `<span>${esc(colPuis(p))}</span>` : ""}<span></span></div>
       ${lignes}
       <div class="ajout"><button class="btn ghost sm" data-a="serie-plus" data-i="${i}">${ic("plus", "sm")}Série</button></div>
     </div>
@@ -2640,7 +2682,7 @@ const actions = {
   "pas": (d) => {
     const x = etat.seance.exos[d.i];
     const se = x.sets[d.s];
-    const base = se[d.champ] === null ? (d.champ === "poids" ? x.poidsPrevu : x.repsPrevues.n) || 0 : se[d.champ];
+    const base = se[d.champ] == null ? (d.champ === "poids" ? x.poidsPrevu : d.champ === "puis" ? x.repsPrevues.puis.n : x.repsPrevues.n) || 0 : se[d.champ];
     const pas = d.champ === "poids" ? (Math.max(base, x.poidsPrevu || 0) >= 20 ? 2.5 : 1) : 1;
     changerValeur(d.i, d.s, d.champ, Math.max(0, Math.round((base + d.v * pas) * 100) / 100));
     rendre();
@@ -2648,7 +2690,7 @@ const actions = {
   "serie-plus": (d) => {
     const x = etat.seance.exos[d.i];
     const der = x.sets[x.sets.length - 1] || { poids: x.poidsPrevu, reps: x.repsPrevues && x.repsPrevues.n };
-    x.sets.push({ fait: false, poids: der.poids, reps: der.reps });
+    x.sets.push(Object.assign({ fait: false, poids: der.poids, reps: der.reps }, der.puis !== undefined ? { puis: der.puis } : {}));
     sauver(); fermerMenuOuRendre();
   },
   "noter-poids": (d) => {
@@ -2804,7 +2846,7 @@ document.addEventListener("change", (ev) => {
     rendre();
     return;
   }
-  if ((el.dataset.in === "poids" || el.dataset.in === "reps") && etat.seance) {
+  if ((el.dataset.in === "poids" || el.dataset.in === "reps" || el.dataset.in === "puis") && etat.seance) {
     const v = num(el.value);
     if (el.value.trim() !== "" && !isNaN(v) && v >= 0) changerValeur(Number(el.dataset.i), Number(el.dataset.s), el.dataset.in, v);
     rendre();
