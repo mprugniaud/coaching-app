@@ -65,6 +65,7 @@ const etat = {
 // Tracés Lucide (ISC), en ligne : rien à charger, marche hors réseau.
 const ICONES = {
   check: '<path d="M20 6 9 17l-5-5"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   lecture: '<polygon points="6 3 20 12 6 21 6 3"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   gauche: '<path d="m15 18-6-6 6-6"/>',
@@ -486,7 +487,7 @@ window.addEventListener("offline", () => { etat.enLigne = false; rendreStatut();
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   synchroniser();
-  if (etat.vue === "seance") garderEcran(true);
+  if (etat.vue === "seance") garderEcran(!(etat.seance && etat.seance.pauseDebut));
 });
 
 // Bouton retour d'Android : revenir d'un écran plutôt que fermer l'app.
@@ -519,7 +520,7 @@ function allerA(vue) {
 /** Chaque seconde : chrono de la séance, sans tout redessiner. */
 function tic() {
   const el = document.getElementById("chrono");
-  if (el && etat.seance) el.textContent = mmss(Math.floor((Date.now() - etat.seance.debut) / 1000));
+  if (el && etat.seance) el.textContent = mmss(Math.floor(tempsSeanceMs(etat.seance, Date.now()) / 1000));
 }
 
 
@@ -979,7 +980,7 @@ async function enregistrerSeance() {
 
   const envoi = {
     id: uuid(), ref: S.ref, titre: S.titre, onglet: S.onglet,
-    duree: Math.round((Date.now() - S.debut) / 60000),
+    duree: Math.round(tempsSeanceMs(S, Date.now()) / 60000),
     date: isoLocal(new Date(S.debut)),
     rpePied: S.type === "course" && S.rpePied ? S.rpePied : "",
     exos: S.exos.map((x) => ({
@@ -1096,6 +1097,8 @@ function demarrerRepos(sec, suite) {
 
 function afficherRepos() {
   clearInterval(minuteurRepos);
+  if (etat.seance && etat.seance.pauseDebut) return afficherPause();
+  $repos.classList.remove("pause");
   if (etat.seance && etat.seance.chrono) return afficherChrono();
   const R = etat.seance && etat.seance.repos;
   const visible = !!R && etat.vue === "seance";
@@ -1316,6 +1319,90 @@ function annulerChrono() {
   rendre();
 }
 
+/**
+ * Temps de séance sans les pauses : c'est lui qui part dans la feuille et fait
+ * la charge (durée × RPE). Pendant une pause il reste figé.
+ * pauses = total des pauses finies (ms), pauseDebut = pause en cours. Absents
+ * sur une séance commencée avant la v1.12.0 : comptés comme zéro.
+ */
+function tempsSeanceMs(S, maintenant) {
+  const fin = S.pauseDebut || maintenant;
+  return Math.max(0, fin - S.debut - (S.pauses || 0));
+}
+
+/**
+ * Pause de la séance : chrono de la séance, récup et chrono d'une série en temps
+ * figés (leur reste est gardé), vidéos arrêtées, écran libre de s'éteindre.
+ * Sauvée avec la séance : elle tient si l'app est fermée.
+ */
+function mettreEnPause() {
+  const S = etat.seance;
+  if (!S || S.pauseDebut) return;
+  const t = Date.now();
+  S.pauseDebut = t;
+  clearInterval(minuteurRepos);
+  couperDecompte();
+  if (S.repos) { S.repos.reste = Math.max(0, S.repos.fin - t); S.repos.decompte = false; }
+  // Chrono déjà mis en pause à la main : on le laisse tel quel, l'élève le relancera.
+  if (S.chrono && S.chrono.phase !== "reps" && S.chrono.pause === undefined) {
+    S.chrono.pause = Math.max(0, S.chrono.fin - t);
+    S.chrono.pauseSeance = true;
+    S.chrono.decompte = false;
+  }
+  pauserVideos();
+  garderEcran(false);
+  sauver();
+}
+
+/** Fin de la pause : son temps est retiré de la durée ; récup et chrono repartent si relancer. */
+function finirPause(relancer) {
+  const S = etat.seance;
+  if (!S || !S.pauseDebut) return;
+  const t = Date.now();
+  S.pauses = (S.pauses || 0) + Math.max(0, t - S.pauseDebut);
+  S.pauseDebut = null;
+  if (S.repos && S.repos.reste !== undefined) {
+    if (relancer) S.repos.fin = t + S.repos.reste;
+    delete S.repos.reste;
+  }
+  if (S.chrono && S.chrono.pauseSeance) {
+    if (relancer) { S.chrono.fin = t + S.chrono.pause; delete S.chrono.pause; }
+    delete S.chrono.pauseSeance;
+  }
+  sauver();
+}
+
+/** Écran de pause : couvre la séance, un seul bouton pour repartir. */
+function afficherPause() {
+  const S = etat.seance;
+  const visible = etat.vue === "seance";
+  $repos.hidden = !visible;
+  $repos.classList.toggle("pause", visible);
+  $repos.classList.remove("fini");
+  document.body.classList.toggle("avec-repos", visible);
+  if (!visible) return;
+  const figes = [S.repos ? "récup " + mmss(Math.ceil(S.repos.reste / 1000)) : "",
+                 S.chrono && S.chrono.pause !== undefined ? "chrono de la série " + mmss(Math.ceil(S.chrono.pause / 1000)) : ""]
+    .filter(Boolean).join(" · ");
+  $repos.innerHTML = `
+    <div class="xs subtle" style="font-weight:600;letter-spacing:.06em;text-transform:uppercase">En pause</div>
+    <div class="temps-pause tnum">${mmss(Math.floor(tempsSeanceMs(S, Date.now()) / 1000))}</div>
+    <div class="suivant">${esc(S.titre)} · pause depuis <span class="depuis"></span>${figes ? "<br>En attente : " + esc(figes) : ""}</div>
+    <div class="row"><button class="btn lg" data-a="pause-fin">${ic("chrono")}Reprendre</button></div>`;
+  const $d = $repos.querySelector(".depuis");
+  const maj = () => { $d.textContent = dureeTexte(Date.now() - S.pauseDebut); };
+  maj();
+  minuteurRepos = setInterval(maj, 1000);
+}
+
+/** « 45 s », « 12 min », « 1 h 05 ». */
+function dureeTexte(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return s + " s";
+  const m = Math.floor(s / 60);
+  return m < 60 ? m + " min" : Math.floor(m / 60) + " h " + String(m % 60).padStart(2, "0");
+}
+
 function finRepos() {
   clearInterval(minuteurRepos);
   couperDecompte();
@@ -1505,9 +1592,11 @@ function rendre() {
   $app.innerHTML = (avecMarque ? marque() : "") + (vues[etat.vue] || vueAccueil)() +
     (etat.menu !== null ? vueMenu() : "");
   if (etat.vue === "seance") {
-    brancherVideos();
+    // En pause : ni vidéo derrière l'écran de pause, ni écran gardé allumé.
+    const enPause = !!(etat.seance && etat.seance.pauseDebut);
+    if (!enPause) brancherVideos();
     afficherRepos();
-    garderEcran(true);
+    garderEcran(!enPause);
   } else {
     $repos.hidden = true;
     document.body.classList.remove("avec-repos");
@@ -1630,10 +1719,10 @@ function carteProchaine() {
   if (S) {
     const c = compteSeries(S);
     return `<div class="hero">
-      <div class="row between"><span class="badge accent"><span class="dot"></span>En cours</span>
+      <div class="row between">${S.pauseDebut ? `<span class="badge">${ic("pause", "sm")}En pause</span>` : `<span class="badge accent"><span class="dot"></span>En cours</span>`}
         <span class="xs muted tnum">${c.faites}/${c.total} séries</span></div>
       <h2 class="hero-titre">${esc(S.titre)}</h2>
-      <p class="sm muted">${esc(nomSemaine(S.onglet).titre)} · exercice ${S.etape + 1} sur ${S.etapes.length}</p>
+      <p class="sm muted">${esc(nomSemaine(S.onglet).titre)} · exercice ${S.etape + 1} sur ${S.etapes.length}${S.pauseDebut ? " · pause depuis " + dureeTexte(Date.now() - S.pauseDebut) : ""}</p>
       <div class="bar accent" style="margin:14px 0"><div style="width:${c.total ? Math.round(100 * c.faites / c.total) : 0}%"></div></div>
       <button class="btn lg block hero-btn" data-a="reprendre">${ic("chrono")}Reprendre la séance</button></div>`;
   }
@@ -1865,7 +1954,7 @@ function vueSeance() {
       ${marque()}
       <div class="row between">
         <button class="btn icon" data-a="menu-seance" aria-label="Quitter">${ic("x")}</button>
-        <div class="titre"><b>${esc(S.titre)}</b><span class="sm muted tnum"><span id="chrono">${mmss(Math.floor((Date.now() - S.debut) / 1000))}</span> · ${c.faites}/${c.total} séries</span></div>
+        <div class="titre"><b>${esc(S.titre)}</b><span class="sm muted tnum"><span id="chrono">${mmss(Math.floor(tempsSeanceMs(S, Date.now()) / 1000))}</span> · ${c.faites}/${c.total} séries</span></div>
         <button class="btn icon" data-a="terminer" aria-label="Terminer">${ic("check")}</button>
       </div>
       <div class="bar mt"><div style="width:${c.total ? Math.round(100 * c.faites / c.total) : 0}%"></div></div>
@@ -2006,7 +2095,8 @@ function vueMenu() {
   if (etat.menu === "seance") {
     return `<div class="voile" data-a="menu-fermer"><div class="feuille" data-a="rien">
       <div class="poignee"></div><div class="titre">${esc(etat.seance.titre)}</div>
-      <button data-a="quitter">${ic("gauche")}<span>Quitter<br><span class="xs muted">La séance reste en cours, tu la reprends quand tu veux</span></span></button>
+      <button data-a="pause">${ic("pause")}<span>Mettre en pause<br><span class="xs muted">Le chrono s'arrête, la pause ne compte pas dans la durée</span></span></button>
+      <button data-a="quitter">${ic("gauche")}<span>Quitter<br><span class="xs muted">La séance se met en pause, tu la reprends quand tu veux</span></span></button>
       <button data-a="terminer">${ic("check")}Terminer et voir le récapitulatif</button>
       <button class="danger" data-a="abandonner">${ic("x")}<span>Abandonner la séance<br><span class="xs muted">Rien n'est envoyé à ta feuille</span></span></button>
       <button data-a="menu-fermer">Annuler</button></div></div>`;
@@ -2113,7 +2203,8 @@ function classeRPE(v) {
 function vueRecap() {
   const S = etat.seance;
   if (!S) return vueAccueil();
-  const minutes = Math.round((Date.now() - S.debut) / 60000);
+  const minutes = Math.round(tempsSeanceMs(S, Date.now()) / 60000);
+  const pauses = Math.round((S.pauses || 0) / 60000);
   const c = compteSeries(S);
   const rpes = S.exos.filter((x) => !x.saute && x.rpe).map((x) => x.rpe);
   const moy = rpes.length ? fmtNum(Math.round(rpes.reduce((a, b) => a + b, 0) / rpes.length * 10) / 10) : "—";
@@ -2132,7 +2223,7 @@ function vueRecap() {
 
   return `<button class="back" data-a="continuer">${ic("gauche", "sm")}Revenir à la séance</button>
     <div class="top"><div><h1>Récapitulatif</h1><p class="muted">${esc(S.titre)} · ${esc(nomSemaine(S.onglet).titre)}</p></div></div>
-    <div class="stats"><div><b class="tnum">${minutes} min</b><span>durée</span></div>
+    <div class="stats"><div><b class="tnum">${minutes} min</b><span>durée${pauses ? " · " + pauses + " min de pause retirées" : ""}</span></div>
       <div><b class="tnum">${c.faites}/${c.total}</b><span>séries</span></div>
       <div><b class="tnum ${rpes.length ? "txt-" + classeRPE(num(moy)) : ""}">${moy}</b><span>RPE moyen</span></div></div>
     ${rpeSeance}
@@ -2611,6 +2702,7 @@ const actions = {
   },
   "commencer": (d) => commencer(d.ref),
   "reprendre": () => {
+    finirPause(true);                // « Reprendre la séance » de l'accueil vaut fin de pause
     activerSon();
     naviguer("seance");
     if (etat.enLigne) preparerHorsLigne(etat.seance.ref, [etat.seance.ref], true);
@@ -2659,9 +2751,23 @@ const actions = {
   "menu-seance": () => { etat.menu = "seance"; history.pushState({ vue: etat.vue, menu: true }, ""); rendre(); },
   "quitter": () => {
     // Pas history.back() pour sortir : si l'app a rouvert sur la séance, ce serait la fermer.
+    // Pause automatique, sauf pendant une récup : elle doit continuer pendant qu'on fait autre chose.
+    const S = etat.seance;
+    const pause = !S.repos;
+    if (pause) mettreEnPause();
     etat.menu = null;
     allerA(etat.semaine !== null ? "semaine" : "accueil");
-    toast("Séance gardée : reprends-la quand tu veux.");
+    toast(pause ? "Séance en pause : reprends-la quand tu veux." : "Séance gardée, la récup continue.");
+  },
+  "pause": () => {
+    mettreEnPause();
+    if (etat.menu !== null) { etat.menu = null; history.replaceState({ vue: "seance" }, ""); }
+    rendre();
+  },
+  "pause-fin": () => {
+    finirPause(true);
+    activerSon();
+    rendre();
   },
   "abandonner": async () => {
     if (!confirm("Abandonner la séance ? Ce que tu as saisi sera perdu, rien n'est envoyé.")) return;
@@ -2724,6 +2830,7 @@ const actions = {
   "prec": () => changerEtape(-1),
   "suiv": () => changerEtape(1),
   "terminer": () => {
+    finirPause(false);
     if (etat.seance.chrono) { couperDecompte(); etat.seance.chrono = null; }
     finRepos();
     sonFinSeance();

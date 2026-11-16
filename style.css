@@ -351,3 +351,11 @@ h1.row { gap: 2px; }
 h1.row .btn.icon { width: 32px; height: 32px; color: var(--fg-muted); }
 .lien-txt { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
 .aide .badge { flex-shrink: 0; min-width: 104px; justify-content: center; }
+
+/* --- Pause de la séance : le même panneau, en plein écran ------------- */
+#repos.pause:not([hidden]) {
+  top: 0; border-radius: 0; border: 0; max-width: none; display: flex; flex-direction: column;
+  justify-content: center; align-items: center; gap: 6px; padding-top: env(safe-area-inset-top);
+}
+#repos.pause .temps-pause { font-size: 56px; font-weight: 700; letter-spacing: -.03em; margin: 8px 0 4px; }
+#repos.pause .suivant { max-width: 320px; }
